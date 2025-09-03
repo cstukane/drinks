@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dicey Drinks</title>
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="manifest" href="pwa/manifest.json">
+    <meta name="theme-color" content="#00ffff">
+    <link rel="icon" href="assets/icon-192.png" type="image/png">
+</head>
+<body>
+    <header id="topbar">
+        <button id="home-btn" class="icon-btn" title="Home" aria-label="Home">🏠</button>
+        <div class="brand">Dicey Drinks</div>
+        <div class="spacer"></div>
+    </header>
+    <div id="progress-drawer-container"></div>
+    <main id="app-container"></main>
+    <!-- Vendor globals (keep as classic scripts) -->
+    <script src="js/vendor/pako.min.js"></script>
+    <!-- App entrypoint as ES Module -->
+    <script type="module" src="js/app.js"></script>
+    <script>
+        // Register service worker for PWA only when hosted over HTTP(S)
+        if ('serviceWorker' in navigator && window.location.protocol !== 'file:') {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./pwa/sw.js')
+                    .then(registration => {
+                        console.log('SW registered: ', registration);
+                    })
+                    .catch(registrationError => {
+                        console.log('SW registration failed: ', registrationError);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>

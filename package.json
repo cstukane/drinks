@@ -1,0 +1,23 @@
+{
+  "name": "dicey-drinks",
+  "version": "1.0.0",
+  "description": "A mobile-first, offline web app that rolls dice to build a random drink/shot",
+  "main": "index.html",
+  "scripts": {
+    "lint": "eslint js/",
+    "lint:fix": "eslint js/ --fix",
+    "test": "node tests/node-test-runner.js"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
+  },
+  "keywords": [
+    "dice",
+    "drinks",
+    "cocktails",
+    "random",
+    "generator"
+  ],
+  "author": "Cole Smith",
+  "license": "MIT"
+}

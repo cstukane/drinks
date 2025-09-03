@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "settings": {
+    "theme": "dark-neon",
+    "maxRerolls": 1,
+    "dieFaces": 20,
+    "showDieNumbers": true
+  },
+  "inventory": {
+    "spirits": [],
+    "mixers": [],
+    "additives": []
+  },
+  "subpools": {},
+  "secondary": {
+    "sec.juice": [],
+    "sec.bitters": [],
+    "sec.syrup": []
+  },
+  "rules": {
+    "hard_bans": [],
+    "soft_rules": []
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "settings": {
+    "theme": "dark-neon",
+    "maxRerolls": 1,
+    "dieFaces": 20,
+    "showDieNumbers": true
+  },
+  "inventory": {
+    "spirits": [
+      {
+        "id": "spirits.whiskey",
+        "name": "Whiskey",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.whiskey"
+      },
+      {
+        "id": "spirits.liqueur",
+        "name": "Cream Liqueur",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.cream_liqueur"
+      },
+      {
+        "id": "spirits.wine",
+        "name": "Wine",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.wine"
+      }
+    ],
+    "mixers": [
+      {
+        "id": "mixers.beer",
+        "name": "Beer",
+        "in_rotation": true,
+        "traits": [
+          "beer"
+        ]
+      },
+      {
+        "id": "mixers.juice",
+        "name": "Juice",
+        "in_rotation": true,
+        "requires_secondary": "sec.juice"
+      },
+      {
+        "id": "mixers.coffee",
+        "name": "Coffee",
+        "in_rotation": true,
+        "traits": [
+          "coffee",
+          "bitter"
+        ]
+      }
+    ],
+    "additives": [
+      {
+        "id": "add.smoke",
+        "name": "Smoke",
+        "in_rotation": true,
+        "traits": [
+          "smoke"
+        ]
+      },
+      {
+        "id": "add.whipped_cream",
+        "name": "Whipped Cream",
+        "in_rotation": true,
+        "traits": [
+          "dairy_or_cream",
+          "whipped_cream"
+        ]
+      }
+    ]
+  },
+  "subpools": {
+    "sub.whiskey": [
+      {
+        "id": "whiskey.pb",
+        "name": "PB Whiskey",
+        "in_rotation": true,
+        "traits": [
+          "sweet",
+          "nutty"
+        ]
+      }
+    ],
+    "sub.cream_liqueur": [
+      {
+        "id": "cream.generic",
+        "name": "Generic Cream Liqueur",
+        "in_rotation": true,
+        "traits": [
+          "cream_liqueur",
+          "dairy_or_cream"
+        ]
+      }
+    ],
+    "sub.wine": [
+      {
+        "id": "wine.red",
+        "name": "Red Wine",
+        "in_rotation": true,
+        "traits": [
+          "wine"
+        ]
+      }
+    ]
+  },
+  "secondary": {
+    "sec.juice": [
+      {
+        "id": "juice.oj",
+        "name": "Orange Juice",
+        "in_rotation": true,
+        "traits": ["acidic", "citrus"]
+      },
+      {
+        "id": "juice.cranberry",
+        "name": "Cranberry Juice",
+        "in_rotation": true,
+        "traits": ["acidic"]
+      }
+    ],
+    "sec.bitters": [],
+    "sec.syrup": []
+  },
+  "rules": {
+    "hard_bans": [
+      {
+        "a": "trait:acidic",
+        "b": "trait:dairy_or_cream"
+      },
+      {
+        "a": "trait:coffee",
+        "b": "trait:wine"
+      }
+    ],
+    "soft_rules": [
+      {
+        "a": "trait:cream_liqueur",
+        "b": "trait:beer",
+        "weight_mult": 0.25
+      },
+      {
+        "a": "add.smoke",
+        "b": "trait:whipped_cream",
+        "weight_mult": 0.4
+      },
+      {
+        "a": "spirits.mezcal",
+        "b": "whiskey.pb",
+        "weight_mult": 0.4
+      }
+    ]
+  }
+}

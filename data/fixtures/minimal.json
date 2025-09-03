@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "inventory": {
+    "spirits": [
+      {
+        "id": "spirits.whiskey",
+        "name": "Whiskey",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.whiskey"
+      },
+      {
+        "id": "spirits.wine",
+        "name": "Wine",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.wine"
+      }
+    ],
+    "mixers": [
+      {
+        "id": "mixers.coffee",
+        "name": "Coffee",
+        "in_rotation": true,
+        "traits": [
+          "coffee",
+          "bitter"
+        ]
+      }
+    ],
+    "additives": [
+      {
+        "id": "add.salted_rim",
+        "name": "Salted Rim",
+        "in_rotation": true,
+        "kind": "rim"
+      }
+    ]
+  },
+  "subpools": {
+    "sub.whiskey": [
+      {
+        "id": "whiskey.bourbon",
+        "name": "Bourbon",
+        "in_rotation": true,
+        "traits": [
+          "oak",
+          "vanilla"
+        ]
+      }
+    ],
+    "sub.wine": [
+      {
+        "id": "wine.red",
+        "name": "Red Wine",
+        "in_rotation": true,
+        "traits": [
+          "wine"
+        ]
+      }
+    ]
+  },
+  "secondary": {
+    "sec.juice": [],
+    "sec.bitters": [],
+    "sec.syrup": []
+  },
+  "rules": {
+    "hard_bans": [
+      {
+        "a": "trait:coffee",
+        "b": "trait:wine"
+      }
+    ],
+    "soft_rules": []
+  }
+}

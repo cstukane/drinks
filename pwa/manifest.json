@@ -1,0 +1,21 @@
+{
+  "name": "Dicey Drinks",
+  "short_name": "Dicey Drinks",
+  "description": "Roll dice to build random drinks and shots with editable inventory and recipe cards",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#1a1a1a",
+  "theme_color": "#00ffff",
+  "icons": [
+    {
+      "src": "../assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "../assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

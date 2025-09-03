@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "inventory": {
+    "spirits": [
+      {
+        "id": "spirits.whiskey",
+        "name": "Whiskey",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.whiskey"
+      },
+      {
+        "id": "spirits.liqueur",
+        "name": "Cream Liqueur",
+        "type": "family",
+        "in_rotation": true,
+        "subpool_id": "sub.cream_liqueur"
+      }
+    ],
+    "mixers": [
+      {
+        "id": "mixers.beer",
+        "name": "Beer",
+        "in_rotation": true,
+        "traits": [
+          "beer"
+        ]
+      }
+    ],
+    "additives": [
+      {
+        "id": "add.smoke",
+        "name": "Smoke",
+        "in_rotation": true,
+        "traits": [
+          "smoke"
+        ]
+      },
+      {
+        "id": "add.whipped_cream",
+        "name": "Whipped Cream",
+        "in_rotation": true,
+        "traits": [
+          "dairy_or_cream",
+          "whipped_cream"
+        ]
+      }
+    ]
+  },
+  "subpools": {
+    "sub.whiskey": [
+      {
+        "id": "whiskey.pb",
+        "name": "PB Whiskey",
+        "in_rotation": true,
+        "traits": [
+          "sweet",
+          "nutty"
+        ]
+      }
+    ],
+    "sub.cream_liqueur": [
+      {
+        "id": "cream.generic",
+        "name": "Generic Cream Liqueur",
+        "in_rotation": true,
+        "traits": [
+          "cream_liqueur",
+          "dairy_or_cream"
+        ]
+      }
+    ]
+  },
+  "secondary": {
+    "sec.juice": [],
+    "sec.bitters": [],
+    "sec.syrup": []
+  },
+  "rules": {
+    "hard_bans": [
+      {
+        "a": "trait:acidic",
+        "b": "trait:dairy_or_cream"
+      }
+    ],
+    "soft_rules": [
+      {
+        "a": "trait:cream_liqueur",
+        "b": "trait:beer",
+        "weight_mult": 0.25
+      },
+      {
+        "a": "add.smoke",
+        "b": "trait:whipped_cream",
+        "weight_mult": 0.4
+      },
+      {
+        "a": "spirits.mezcal",
+        "b": "whiskey.pb",
+        "weight_mult": 0.4
+      }
+    ]
+  }
+}

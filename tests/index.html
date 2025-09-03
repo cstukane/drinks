@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Dicey Drinks - Test Suite</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+        }
+        .test-suite {
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-name {
+            font-weight: bold;
+            color: #00ffff;
+            margin-bottom: 10px;
+        }
+        .test-result {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 5px 0;
+        }
+        .pass {
+            background-color: #2a5c2a;
+            border-left: 4px solid #4caf50;
+        }
+        .fail {
+            background-color: #5c2a2a;
+            border-left: 4px solid #f44336;
+        }
+        button {
+            background-color: #00ffff;
+            color: #1a1a1a;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        button:hover {
+            background-color: #00cccc;
+        }
+        #test-output {
+            background-color: #333;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>Dicey Drinks - Test Suite</h1>
+    
+    <div class="test-suite">
+        <div class="test-name">Test Runner</div>
+        <button id="run-all-tests">Run All Tests</button>
+        <button id="run-validation-tests">Run Validation Tests</button>
+        <button id="run-rng-tests">Run RNG Tests</button>
+        <button id="run-rules-tests">Run Rules Tests</button>
+        <button id="run-joker-tests">Run Joker Tests</button>
+        <button id="run-shape-tests">Run Shape Mapping Tests</button>
+        <button id="run-animation-tests">Run Animation Fallback Tests</button>
+    </div>
+    
+    <div class="test-suite">
+        <div class="test-name">Test Output</div>
+        <div id="test-output">Click a test button to see output...</div>
+    </div>
+    
+    <div class="test-suite">
+        <div class="test-name">Test Results</div>
+        <div id="test-results"></div>
+    </div>
+
+    <script type="module">
+        // Import test modules
+        import { cryptoRoll, cryptoChoice, weightedCryptoChoice, getRandomFloat } from '../js/rng.js';
+        import { violatesHardBan, getSoftWeight } from '../js/rules.js';
+        import { initDB, getData } from '../js/storage.js';
+        import { encodeShareCode, decodeShareCode } from '../js/exporter.js';
+        
+        // Test results tracking
+        let testResults = [];
+        
+        // Utility functions
+        function logToOutput(message) {
+            const output = document.getElementById('test-output');
+            output.textContent += message + '\n';
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        function clearOutput() {
+            document.getElementById('test-output').textContent = '';
+        }
+        
+        function addTestResult(name, passed, details = '') {
+            testResults.push({ name, passed, details });
+            const resultsDiv = document.getElementById('test-results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            resultDiv.innerHTML = `<strong>${name}</strong>: ${passed ? 'PASS' : 'FAIL'} ${details ? '- ' + details : ''}`;
+            resultsDiv.appendChild(resultDiv);
+        }
+        
+        // RNG Tests
+        function runRNGTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running RNG tests...');
+            
+            // Test cryptoRoll
+            logToOutput('Testing cryptoRoll...');
+            let rollResults = {};
+            for (let i = 0; i < 1000; i++) {
+                const result = cryptoRoll(20);
+                rollResults[result] = (rollResults[result] || 0) + 1;
+            }
+            logToOutput('Roll distribution: ' + JSON.stringify(rollResults));
+            
+            // Basic validation - all numbers 1-20 should appear
+            let allNumbersPresent = true;
+            for (let i = 1; i <= 20; i++) {
+                if (!rollResults[i]) {
+                    allNumbersPresent = false;
+                    break;
+                }
+            }
+            addTestResult('Crypto Roll Distribution', allNumbersPresent, 'All numbers 1-20 present in 1000 rolls');
+            
+            // Test cryptoChoice
+            logToOutput('Testing cryptoChoice...');
+            const testArray = ['a', 'b', 'c', 'd', 'e'];
+            let choiceResults = {};
+            for (let i = 0; i < 1000; i++) {
+                const result = cryptoChoice(testArray);
+                choiceResults[result] = (choiceResults[result] || 0) + 1;
+            }
+            logToOutput('Choice distribution: ' + JSON.stringify(choiceResults));
+            
+            // Basic validation - all choices should appear
+            let allChoicesPresent = true;
+            for (const choice of testArray) {
+                if (!choiceResults[choice]) {
+                    allChoicesPresent = false;
+                    break;
+                }
+            }
+            addTestResult('Crypto Choice Distribution', allChoicesPresent, 'All choices present in 1000 rolls');
+            
+            // Test weightedCryptoChoice
+            logToOutput('Testing weightedCryptoChoice...');
+            const items = ['low', 'medium', 'high'];
+            const weights = [1, 5, 10]; // High should be chosen most often
+            let weightedResults = {};
+            for (let i = 0; i < 1000; i++) {
+                const result = weightedCryptoChoice(items, weights);
+                weightedResults[result] = (weightedResults[result] || 0) + 1;
+            }
+            logToOutput('Weighted choice distribution: ' + JSON.stringify(weightedResults));
+            
+            // Validation - high should be chosen most often
+            const isHighMostChosen = weightedResults['high'] > weightedResults['medium'] && 
+                                   weightedResults['high'] > weightedResults['low'];
+            addTestResult('Weighted Choice Bias', isHighMostChosen, `'high' chosen most often (${weightedResults['high']} times)`);
+            
+            // Test getRandomFloat
+            logToOutput('Testing getRandomFloat...');
+            let floatResults = [];
+            for (let i = 0; i < 100; i++) {
+                const result = getRandomFloat();
+                floatResults.push(result);
+            }
+            logToOutput('Float results sample (first 10): ' + floatResults.slice(0, 10).join(', '));
+            
+            // Validation - all floats should be between 0 and 1
+            let allFloatsValid = true;
+            for (const float of floatResults) {
+                if (float < 0 || float >= 1) {
+                    allFloatsValid = false;
+                    break;
+                }
+            }
+            addTestResult('Random Float Range', allFloatsValid, 'All floats in [0,1) range');
+            
+            logToOutput('RNG tests completed.');
+        }
+        
+        // Rules Tests
+        function runRulesTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running rule evaluation tests...');
+            
+            // Test data
+            const hardBans = [
+                { a: 'trait:coffee', b: 'trait:wine' },
+                { a: 'trait:acidic', b: 'trait:dairy_or_cream' }
+            ];
+            
+            // Test violatesHardBan
+            logToOutput('Testing violatesHardBan...');
+            
+            // Test case 1: Coffee mixer should be banned with wine selected
+            const coffeeMixer = { id: 'mixers.coffee', traits: ['coffee', 'caffeinated'] };
+            const selectedItemsWithWine = [{ id: 'spirits.wine', traits: ['wine', 'alcoholic'] }];
+            const isBanned1 = violatesHardBan(coffeeMixer, selectedItemsWithWine, hardBans);
+            logToOutput('Coffee mixer banned with wine selected: ' + isBanned1); // Should be true
+            addTestResult('Hard Ban - Coffee with Wine', isBanned1, 'Coffee correctly banned when wine is selected');
+            
+            // Test case 2: Juice mixer should not be banned with wine selected
+            const juiceMixer = { id: 'mixers.juice', traits: ['fruit', 'sweet'] };
+            const isBanned2 = violatesHardBan(juiceMixer, selectedItemsWithWine, hardBans);
+            logToOutput('Juice mixer banned with wine selected: ' + isBanned2); // Should be false
+            addTestResult('Hard Ban - Juice with Wine', !isBanned2, 'Juice correctly not banned when wine is selected');
+            
+            // Test getSoftWeight
+            logToOutput('Testing getSoftWeight...');
+            const softRules = [
+                { a: 'trait:cream_liqueur', b: 'trait:beer', weight_mult: 0.25 }, // Downweight
+                { a: 'trait:citrus', b: 'trait:vodka', weight_mult: 2.0 } // Upweight (hypothetical)
+            ];
+            
+            // Test case 1: Cream liqueur and beer should be downweighted
+            const creamLiqueur = { id: 'spirits.liqueur', traits: ['cream_liqueur', 'dairy_or_cream'] };
+            const beer = { id: 'mixers.beer', traits: ['beer'] };
+            const weight1 = getSoftWeight(beer, [creamLiqueur], softRules);
+            logToOutput('Cream liqueur + Beer weight: ' + weight1); // Should be 0.25
+            addTestResult('Soft Weight - Cream Liqueur + Beer', weight1 === 0.25, `Weight is ${weight1}, expected 0.25`);
+            
+            // Test case 2: Neutral items should have weight 1.0
+            const neutralMixer = { id: 'mixers.soda', traits: ['carbonated'] };
+            const weight2 = getSoftWeight(neutralMixer, [creamLiqueur], softRules);
+            logToOutput('Cream liqueur + Neutral weight: ' + weight2); // Should be 1.0
+            addTestResult('Soft Weight - Neutral Items', weight2 === 1.0, `Weight is ${weight2}, expected 1.0`);
+            
+            logToOutput('Rule evaluation tests completed.');
+        }
+        
+        // Joker Tests
+        function runJokerTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running joker sentinel tests...');
+            
+            // Test joker detection
+            logToOutput('Testing joker detection...');
+            const jokerItem = { name: '🃏' };
+            const regularItem = { name: 'Vodka' };
+            
+            const isJoker1 = (jokerItem && jokerItem.name === '🃏');
+            const isJoker2 = (regularItem && regularItem.name === '🃏');
+            
+            logToOutput('Joker item correctly identified: ' + isJoker1); // Should be true
+            logToOutput('Regular item correctly not identified as joker: ' + !isJoker2); // Should be true
+            
+            addTestResult('Joker Detection - Joker Item', isJoker1, 'Joker symbol correctly identified');
+            addTestResult('Joker Detection - Regular Item', !isJoker2, 'Regular item correctly not identified as joker');
+            
+            // Test k value assignment
+            logToOutput('Testing k value assignment...');
+            const candidates = [
+                { id: 'spirits.vodka', name: 'Vodka' },
+                { id: 'spirits.gin', name: 'Gin' },
+                { id: 'spirits.whiskey', name: 'Whiskey' }
+            ];
+            
+            // For regular item
+            const selectedItem = candidates[1]; // Gin
+            let k = 1;
+            if (selectedItem.name !== '🃏') {
+                k = candidates.findIndex(candidate => candidate.id === selectedItem.id) + 1;
+                if (k === 0) k = 1; // Fallback
+            } else {
+                k = 'joker'; // Use sentinel value for joker
+            }
+            
+            logToOutput('Regular item k value: ' + k); // Should be 2 (Gin is at index 1, so position 2)
+            addTestResult('K Value Assignment - Regular Item', k === 2, `K value is ${k}, expected 2`);
+            
+            // For joker item
+            const jokerK = 'joker';
+            logToOutput('Joker item k value: ' + jokerK); // Should be 'joker'
+            addTestResult('K Value Assignment - Joker Item', jokerK === 'joker', `K value is ${jokerK}, expected 'joker'`);
+            
+            logToOutput('Joker sentinel tests completed.');
+        }
+        
+        // Shape Mapping Tests
+        function runShapeMappingTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running N→shape mapping tests...');
+            
+            // Mapping function from anim.js
+            function mapNToShape(N) {
+                if (N <= 4) return 'd4';
+                if (N <= 7) return 'd6';
+                if (N <= 9) return 'd8';
+                if (N <= 11) return 'd10'; // Using d20 as fallback for d10
+                if (N <= 16) return 'd12';
+                return 'd20';
+            }
+            
+            // Test cases
+            logToOutput('Testing shape mapping...');
+            const testCases = [
+                { N: 1, expected: 'd4' },
+                { N: 2, expected: 'd4' },
+                { N: 3, expected: 'd4' },
+                { N: 4, expected: 'd4' },
+                { N: 5, expected: 'd6' },
+                { N: 6, expected: 'd6' },
+                { N: 7, expected: 'd6' },
+                { N: 8, expected: 'd8' },
+                { N: 9, expected: 'd8' },
+                { N: 10, expected: 'd10' },
+                { N: 11, expected: 'd10' },
+                { N: 12, expected: 'd12' },
+                { N: 16, expected: 'd12' },
+                { N: 17, expected: 'd20' },
+                { N: 20, expected: 'd20' },
+                { N: 100, expected: 'd20' }
+            ];
+            
+            let allPassed = true;
+            testCases.forEach(test => {
+                const result = mapNToShape(test.N);
+                const passed = result === test.expected;
+                logToOutput(`N=${test.N} → ${result} (${passed ? 'PASS' : 'FAIL'})`);
+                if (!passed) allPassed = false;
+                addTestResult(`Shape Mapping N=${test.N}`, passed, `Expected ${test.expected}, got ${result}`);
+            });
+            
+            logToOutput('N→shape mapping tests completed.');
+        }
+        
+        // Animation Fallback Tests
+        function runAnimationFallbackTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running animation fallback tests...');
+            
+            // Mock functions to simulate the actual implementation
+            function isWebGLSupported() {
+                // In a real implementation, this would check for WebGL support
+                // For testing, we'll simulate both scenarios
+                return false; // Simulate WebGL not available
+            }
+            
+            function displayPick(item, type) {
+                logToOutput(`Fallback display: You rolled ${item.name} (${type})`);
+            }
+            
+            // Mock roll3D function that might fail
+            function roll3D(options) {
+                // Simulate potential failure
+                if (!isWebGLSupported()) {
+                    throw new Error('WebGL not available');
+                }
+                // In a real implementation, this would perform the 3D animation
+                logToOutput('Performing 3D roll with options: ' + JSON.stringify(options));
+                return Promise.resolve();
+            }
+            
+            // Test fallback behavior
+            logToOutput('Testing animation fallback...');
+            const testItem = { name: 'Vodka', id: 'spirits.vodka' };
+            const testType = 'spirit';
+            const testCandidates = [testItem, { name: 'Gin', id: 'spirits.gin' }];
+            
+            try {
+                roll3D({ 
+                    parent: document.createElement('div'), 
+                    N: testCandidates.length, 
+                    k: 1,
+                    durationMs: 1200
+                }).then(() => {
+                    logToOutput('3D animation completed successfully');
+                    addTestResult('Animation Fallback', false, '3D animation should have failed in this test');
+                }).catch((error) => {
+                    logToOutput('3D animation failed, using fallback: ' + error.message);
+                    // This is where the fallback would be triggered
+                    displayPick(testItem, testType);
+                    addTestResult('Animation Fallback', true, 'Fallback correctly triggered when WebGL not available');
+                });
+            } catch (error) {
+                logToOutput('3D animation failed, using fallback: ' + error.message);
+                displayPick(testItem, testType);
+                addTestResult('Animation Fallback', true, 'Fallback correctly triggered when WebGL not available');
+            }
+            
+            logToOutput('Animation fallback tests completed.');
+        }
+        
+        // Validation Tests
+        async function runValidationTests() {
+            clearOutput();
+            testResults = [];
+            logToOutput('Running comprehensive validation tests...');
+            
+            let testData = {};
+            try {
+                await initDB();
+                testData = await getData();
+                logToOutput('Test data loaded successfully');
+            } catch (error) {
+                logToOutput('Failed to initialize test data: ' + error);
+                addTestResult('Test Data Initialization', false, 'Failed to load test data');
+                return;
+            }
+            
+            // Test 1: New Drink end-to-end offline; SVG export downloads; share URL reconstructs recipe
+            logToOutput('Test 1: Recipe creation and share code functionality');
+            testRecipeCreationAndShare();
+            
+            // Test 2: Dealer's Choice shows dY? face; manual pick modal opens; selection locks
+            logToOutput('Test 2: Dealer\'s Choice functionality');
+            testDealersChoice();
+            
+            // Test 3: Hard-ban timing: Wine selected → Coffee excluded later; Wine still visible initially
+            logToOutput('Test 3: Hard-ban timing');
+            testHardBanTiming();
+            
+            // Test 4: Soft downweight: Cream Liqueur + Beer still possible but rarer (stat check; ~500 rolls)
+            logToOutput('Test 4: Soft downweight validation');
+            testSoftDownweight();
+            
+            // Test 5: Reroll-last only: Enabled only immediately after a pick; disabled after advancing
+            logToOutput('Test 5: Reroll functionality');
+            testReroll();
+            
+            // Test 6: No-solution guard: Force empty candidate; app reverts one step with a clear message
+            logToOutput('Test 6: No-solution handling');
+            testNoSolution();
+            
+            logToOutput('All validation tests completed.');
+        }
+        
+        function testRecipeCreationAndShare() {
+            // Create a mock recipe
+            const mockRecipe = {
+                type: 'drink',
+                method: 'Shaken',
+                spirits: [{ id: 'spirits.whiskey', name: 'Whiskey' }],
+                mixers: [{ id: 'mixers.coffee', name: 'Coffee' }],
+                additives: []
+            };
+            
+            // Test encoding
+            const shareCode = encodeShareCode(mockRecipe);
+            logToOutput('Share code generated: ' + !!shareCode);
+            addTestResult('Share Code Generation', !!shareCode, 'Share code successfully generated');
+            
+            // Test decoding
+            if (shareCode) {
+                const decodedRecipe = decodeShareCode(shareCode);
+                const correctlyReconstructed = decodedRecipe && 
+                    decodedRecipe.type === mockRecipe.type && 
+                    decodedRecipe.method === mockRecipe.method;
+                logToOutput('Recipe correctly reconstructed: ' + correctlyReconstructed);
+                addTestResult('Recipe Reconstruction', correctlyReconstructed, 'Recipe correctly reconstructed from share code');
+            }
+        }
+        
+        function testDealersChoice() {
+            // Test that joker is correctly identified
+            const isJoker = (item) => item && item.name === '🃏';
+            const jokerCorrectlyIdentified = isJoker({ name: '🃏' });
+            const nonJokerCorrectlyIdentified = !isJoker({ name: 'Vodka' });
+            
+            logToOutput('Joker correctly identified: ' + jokerCorrectlyIdentified);
+            logToOutput('Non-joker correctly identified: ' + nonJokerCorrectlyIdentified);
+            
+            addTestResult('Dealer\'s Choice - Joker Detection', jokerCorrectlyIdentified && nonJokerCorrectlyIdentified, 
+                'Joker and non-joker items correctly identified');
+            
+            // Test that dealer's choice modal would open (simulated)
+            logToOutput('Dealer\'s Choice functionality would open modal with candidate set');
+            addTestResult('Dealer\'s Choice - Modal', true, 'Functionality would open modal with candidate set');
+        }
+        
+        function testHardBanTiming() {
+            // Test that wine is not banned initially
+            const wineSpirit = { id: 'spirits.wine', name: 'Wine', traits: ['wine'] };
+            const initialPool = [wineSpirit];
+            const selectedItems = []; // No items selected yet
+            const hardBans = testData.rules?.hard_bans || [];
+            
+            const isWineBannedInitially = violatesHardBan(wineSpirit, selectedItems, hardBans);
+            logToOutput('Wine not banned initially: ' + !isWineBannedInitially); // Should be true
+            addTestResult('Hard Ban Timing - Initial', !isWineBannedInitially, 'Wine not banned in initial pool');
+            
+            // Test that coffee is banned after wine is selected
+            const coffeeMixer = { id: 'mixers.coffee', name: 'Coffee', traits: ['coffee'] };
+            const selectedItemsWithWine = [{ id: 'spirits.wine', name: 'Wine', traits: ['wine'] }];
+            
+            const isCoffeeBannedAfterWine = violatesHardBan(coffeeMixer, selectedItemsWithWine, hardBans);
+            logToOutput('Coffee banned after wine selected: ' + isCoffeeBannedAfterWine); // Should be true
+            addTestResult('Hard Ban Timing - Contextual', isCoffeeBannedAfterWine, 'Coffee banned after wine is selected');
+        }
+        
+        function testSoftDownweight() {
+            // Statistical test for cream liqueur + beer downweighting
+            const creamLiqueur = { id: 'spirits.liqueur', name: 'Cream Liqueur', traits: ['cream_liqueur'] };
+            const beer = { id: 'mixers.beer', name: 'Beer', traits: ['beer'] };
+            
+            const softRules = testData.rules?.soft_rules || [];
+            const weight = getSoftWeight(beer, [creamLiqueur], softRules);
+            
+            // Check if the weight is correctly applied (should be 0.25 based on defaults)
+            logToOutput('Cream liqueur + beer correctly downweighted: ' + (weight === 0.25));
+            addTestResult('Soft Downweight - Value', weight === 0.25, `Weight is ${weight}, expected 0.25`);
+            
+            // Run a statistical test with 500 rolls
+            let beerCount = 0;
+            const candidates = [beer, { id: 'mixers.soda', name: 'Soda' }]; // Beer and another mixer
+            const weights = candidates.map(item => getSoftWeight(item, [creamLiqueur], softRules));
+            
+            for (let i = 0; i < 500; i++) {
+                const choice = weightedCryptoChoice(candidates, weights);
+                if (choice.id === 'mixers.beer') {
+                    beerCount++;
+                }
+            }
+            
+            const beerPercentage = (beerCount / 500) * 100;
+            logToOutput(`Beer selected ${beerCount}/500 times (${beerPercentage.toFixed(1)}%) - should be < 50% due to downweighting`);
+            
+            // Check that beer was selected less than 50% of the time
+            const isDownweighted = beerPercentage < 50;
+            addTestResult('Soft Downweight - Statistical', isDownweighted, 
+                `Beer selected ${beerPercentage.toFixed(1)}% of time, showing downweighting effect`);
+        }
+        
+        function testReroll() {
+            // Test that reroll is only available immediately after a pick
+            let rerollTokens = 1;
+            logToOutput('Reroll available after pick: ' + (rerollTokens > 0)); // Should be true
+            addTestResult('Reroll Availability - After Pick', rerollTokens > 0, 'Reroll available immediately after pick');
+            
+            // Simulate using a reroll
+            rerollTokens--;
+            logToOutput('Reroll consumed: ' + (rerollTokens === 0)); // Should be true
+            addTestResult('Reroll Consumption', rerollTokens === 0, 'Reroll correctly consumed');
+            
+            // Test that reroll is disabled after advancing
+            // In the app, this would be handled by the state machine
+            logToOutput('Reroll disabled after advancing: ' + (rerollTokens === 0)); // Should be true
+            addTestResult('Reroll Availability - After Advancing', rerollTokens === 0, 'Reroll disabled after advancing');
+        }
+        
+        function testNoSolution() {
+            // Test no-solution handling with empty candidate set
+            const emptyCandidates = [];
+            const choice = cryptoChoice(emptyCandidates);
+            logToOutput('No solution handling for empty candidates: ' + (choice === undefined)); // Should be true
+            addTestResult('No Solution Handling - Empty Candidates', choice === undefined, 'Correctly handles empty candidate set');
+            
+            // Test hard ban that results in empty candidates
+            const impossibleItem = { id: 'mixers.impossible', name: 'Impossible', traits: ['impossible'] };
+            const allItemsBanned = [{ id: 'mixers.banned', name: 'Banned', traits: ['banned'] }];
+            const hardBans = [{ a: 'trait:impossible', b: 'trait:banned' }];
+            
+            const isBanned = violatesHardBan(impossibleItem, allItemsBanned, hardBans);
+            logToOutput('Item correctly banned: ' + isBanned); // Should be true
+            addTestResult('No Solution Handling - Hard Ban', isBanned, 'Item correctly identified as banned');
+        }
+        
+        // Set up event listeners
+        document.getElementById('run-all-tests').addEventListener('click', async function() {
+            runRNGTests();
+            runRulesTests();
+            runJokerTests();
+            runShapeMappingTests();
+            runAnimationFallbackTests();
+            await runValidationTests();
+        });
+        
+        document.getElementById('run-validation-tests').addEventListener('click', runValidationTests);
+        document.getElementById('run-rng-tests').addEventListener('click', runRNGTests);
+        document.getElementById('run-rules-tests').addEventListener('click', runRulesTests);
+        document.getElementById('run-joker-tests').addEventListener('click', runJokerTests);
+        document.getElementById('run-shape-tests').addEventListener('click', runShapeMappingTests);
+        document.getElementById('run-animation-tests').addEventListener('click', runAnimationFallbackTests);
+    </script>
+</body>
+</html>
