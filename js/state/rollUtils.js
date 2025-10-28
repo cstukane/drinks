@@ -30,7 +30,7 @@ export function softWeightedPick(items, lockedItems, rules) {
 }
 
 // Roll for unique items with joker handling
-export function rollForUniqueItemsWithJoker(itemType, count, availableItems, lockedItems, rules, onJokerPick) {
+export async function rollForUniqueItemsWithJoker(itemType, count, availableItems, lockedItems, rules, onJokerPick) {
     let selectedItems = [];
     let rollCount = 0;
 
@@ -49,10 +49,15 @@ export function rollForUniqueItemsWithJoker(itemType, count, availableItems, loc
         // Check for joker (1-in-20 chance)
         const joker = cryptoRoll(20) === 20;
         if (joker) {
-            // Handle joker case with callback
-            onJokerPick(allowed, (pick) => {
-                selectedItems.push(pick);
-                rollCount++;
+            // Handle joker case with callback - return a promise to await the user's choice
+            await new Promise((resolve) => {
+                onJokerPick(allowed, (pick) => {
+                    if (pick) {
+                        selectedItems.push(pick);
+                        rollCount++;
+                    }
+                    resolve();
+                });
             });
         } else {
             // Normal weighted pick

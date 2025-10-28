@@ -28,7 +28,7 @@ export async function rollForUniqueItems(category, numToRoll, availableItems) {
 
         if (remainingItems.length === 0) break;
 
-        const weights = remainingItems.map(item => getSoftWeight(item, state.selectedItems.concat(rolledItems), data.rules.soft_rules));
+        const weights = remainingItems.map(item => getSoftWeight(item, state.selectedItems.concat(rolledItems), (data && data.rules && data.rules.soft_rules) ? data.rules.soft_rules : []));
         const selectedItem = weightedCryptoChoice(remainingItems, weights);
         
         rolledItems.push(selectedItem);
@@ -76,7 +76,8 @@ export async function rollForUniqueItemsManual(category, numToRoll, availableIte
 
 export function findItem(itemId) {
     const category = itemId.split('.')[0] + 's';
-    return data.inventory[category].find(item => item.id === itemId);
+    return (data && data.inventory && data.inventory[category]) ? 
+        data.inventory[category].find(item => item.id === itemId) : null;
 }
 
 export async function displayAnimatedPick(item, type, candidates) {

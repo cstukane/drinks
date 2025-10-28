@@ -154,7 +154,11 @@ function createMethodSelectionState() {
                 if (selectedOption) {
                     highlightAndSlideUp(selectedOption, () => {
                         addProgressStep(`Method: ${state.recipe.method}`);
-                        transitionTo('HOW_MANY');
+                        if (state.recipe.type === 'drink') {
+                            transitionTo('ROCKS_NEAT');
+                        } else {
+                            transitionTo('HOW_MANY');
+                        }
                     });
                 }
             });
@@ -342,7 +346,7 @@ function createMethodState2() {
                 ? ['Shaken', 'Stirred', 'Blended']
                 : ['Shaken', 'Stirred', 'Layered'];
 
-            appContainer.innerHTML = `<h2>Choose a Method</h2>`;
+            appContainer.innerHTML = '<h2>Choose a Method</h2>';
             const listContainer = renderOptions({
                 items: methodsCore,
                 getKey: (m) => m,
@@ -496,8 +500,8 @@ function createRollSpiritsState() {
 
             let rolled = [];
 
-            rollBtn.addEventListener('click', () => {
-                const res = rollForUniqueItemsWithJoker(
+            rollBtn.addEventListener('click', async () => {
+                const res = await rollForUniqueItemsWithJoker(
                     'spirit',
                     state.recipe.numSpirits || 0,
                     allSpirits,
@@ -553,7 +557,7 @@ function createRollMixersState() {
             // Build options list
             let mixerList = '';
             allMixers.forEach((mixer, index) => {
-                mixerList += `<div class="option" data-id="${mixer.id}">${index + 1}. ${mixer.name}</div>`;
+                mixerList += `<div class='option' data-id='${mixer.id}'>${index + 1}. ${mixer.name}</div>`;
             });
 
             appContainer.innerHTML = `
@@ -573,8 +577,8 @@ function createRollMixersState() {
 
             let rolledMixers = [];
 
-            rollBtn.addEventListener('click', () => {
-                const res = rollForUniqueItemsWithJoker(
+            rollBtn.addEventListener('click', async () => {
+                const res = await rollForUniqueItemsWithJoker(
                     'mixer',
                     state.recipe.numMixers || 0,
                     allMixers,
@@ -588,7 +592,7 @@ function createRollMixersState() {
                 rolledMixers = res.selectedItems;
                 optionsContainer.querySelectorAll('.option').forEach(el => el.classList.remove('highlighted'));
                 rolledMixers.forEach(m => {
-                    const el = optionsContainer.querySelector(`.option[data-id=\"${m.id}\"]`);
+                    const el = optionsContainer.querySelector(`.option[data-id="${m.id}"]`);
                     if (el) el.classList.add('highlighted');
                 });
                 rollBtn.style.display = 'none';
@@ -630,7 +634,7 @@ function createRollAdditivesState() {
             // Build options list
             let additiveList = '';
             allAdditives.forEach((a, index) => {
-                additiveList += `<div class="option" data-id="${a.id}">${index + 1}. ${a.name}</div>`;
+                additiveList += `<div class='option' data-id='${a.id}'>${index + 1}. ${a.name}</div>`;
             });
 
             appContainer.innerHTML = `
@@ -650,8 +654,8 @@ function createRollAdditivesState() {
 
             let rolledAdds = [];
 
-            rollBtn.addEventListener('click', () => {
-                const res = rollForUniqueItemsWithJoker(
+            rollBtn.addEventListener('click', async () => {
+                const res = await rollForUniqueItemsWithJoker(
                     'additive',
                     state.recipe.numAdditives || 0,
                     allAdditives,
@@ -665,7 +669,7 @@ function createRollAdditivesState() {
                 rolledAdds = res.selectedItems;
                 optionsContainer.querySelectorAll('.option').forEach(el => el.classList.remove('highlighted'));
                 rolledAdds.forEach(a => {
-                    const el = optionsContainer.querySelector(`.option[data-id=\"${a.id}\"]`);
+                    const el = optionsContainer.querySelector(`.option[data-id="${a.id}"]`);
                     if (el) el.classList.add('highlighted');
                 });
                 rollBtn.style.display = 'none';
@@ -763,7 +767,7 @@ function createPickSecondaryState() {
             const joker = cryptoRoll(20) === 20;
             if (joker) {
                 // Use displayAnimatedPick to show manual selection list
-                window.displayAnimatedPick({ name: "Dealer's Choice" }, 'secondary', allowed);
+                window.displayAnimatedPick({ name: 'Dealer\'s Choice' }, 'secondary', allowed);
                 // Fallback: pick first to continue flow if no manual choice handled
                 picked = allowed[0];
             } else {
@@ -1029,9 +1033,9 @@ function createPickMixerState() {
             const nextBtn = document.getElementById('next-mixers-btn');
             const list = document.getElementById('mixers-list');
             let rolled = [];
-            rollBtn.addEventListener('click', () => {
+            rollBtn.addEventListener('click', async () => {
                 rolled = [];
-                const res = rollForUniqueItemsWithJoker('mixer', state.recipe.numMixers || 0, available, state.selectedItems || [], (currData || {}).rules || {}, (allowed, commit) => {
+                const res = await rollForUniqueItemsWithJoker('mixer', state.recipe.numMixers || 0, available, state.selectedItems || [], (currData || {}).rules || {}, (allowed, commit) => {
                     displayDealersChoiceForBatch('mixer', allowed, (pick) => commit(pick));
                 });
                 if (res.noSolution) { showNoSolutionMessage('No compatible mixers available given prior selections.'); return; }
@@ -1079,9 +1083,9 @@ function createPickAdditiveState() {
             const nextBtn = document.getElementById('next-additives-btn');
             const list = document.getElementById('additives-list');
             let rolled = [];
-            rollBtn.addEventListener('click', () => {
+            rollBtn.addEventListener('click', async () => {
                 rolled = [];
-                const res = rollForUniqueItemsWithJoker('additive', state.recipe.numAdditives || 0, available, state.selectedItems || [], (currData || {}).rules || {}, (allowed, commit) => {
+                const res = await rollForUniqueItemsWithJoker('additive', state.recipe.numAdditives || 0, available, state.selectedItems || [], (currData || {}).rules || {}, (allowed, commit) => {
                     displayDealersChoiceForBatch('additive', allowed, (pick) => commit(pick));
                 });
                 if (res.noSolution) { showNoSolutionMessage('No compatible additives available given prior selections.'); return; }
