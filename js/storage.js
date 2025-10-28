@@ -26,49 +26,7 @@ export function initDB() {
                 const cookbookStore = db.createObjectStore('cookbook', { keyPath: 'id', autoIncrement: true });
                 cookbookStore.createIndex('rating', 'rating', { unique: false });
                 cookbookStore.createIndex('notes', 'notes', { unique: false });
-
-                // Fetch and load initial data
-                fetch('data/defaults.json')
-                    .then(response => response.json())
-                    .then(data => {
-                        console.log('Loading initial data into DB');
-                        const tx = event.target.transaction;
-                        if (data.settings) {
-                            tx.objectStore('settings').put({ id: 'settings', ...data.settings });
-                        }
-                        if (data.inventory) {
-                            if (data.inventory.spirits) {
-                                data.inventory.spirits.forEach(item => tx.objectStore('spirits').put(item));
-                            }
-                            if (data.inventory.mixers) {
-                                data.inventory.mixers.forEach(item => tx.objectStore('mixers').put(item));
-                            }
-                            if (data.inventory.additives) {
-                                data.inventory.additives.forEach(item => tx.objectStore('additives').put(item));
-                            }
-                        }
-
-                        if (data.subpools) {
-                            Object.keys(data.subpools).forEach(key => {
-                                tx.objectStore('subpools').put({ id: key, items: data.subpools[key] });
-                            });
-                        }
-
-                        if (data.secondary) {
-                            Object.keys(data.secondary).forEach(key => {
-                                tx.objectStore('secondary').put({ id: key, items: data.secondary[key] });
-                            });
-                        }
-
-                        // Load rules data
-                        if (data.rules) {
-                            tx.objectStore('rules').put({ id: 'hard_bans', items: data.rules.hard_bans || [] });
-                            tx.objectStore('rules').put({ id: 'soft_rules', items: data.rules.soft_rules || [] });
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error loading initial data:', error);
-                    });
+                // Do not fetch here; seed after open in a separate transaction
             }
 
             if (event.oldVersion < 2) {
@@ -83,37 +41,87 @@ export function initDB() {
                 }
             }
 
-            // Version 3 upgrade - Add rules migration for existing users
+            // Version 3 upgrade - ensure 'rules' store exists for older DBs
             if (event.oldVersion < 3) {
-                console.log('Upgrading to version 3 - migrating rules');
-                const tx = event.target.transaction;
-                
-                // Check if rules store exists, if not create it
+                console.log('Upgrading to version 3 - ensure rules store');
                 if (!db.objectStoreNames.contains('rules')) {
                     db.createObjectStore('rules', { keyPath: 'id' });
                 }
-                
-                // Load default rules
-                fetch('data/defaults.json')
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.rules) {
-                            const rulesStore = tx.objectStore('rules');
-                            rulesStore.put({ id: 'hard_bans', items: data.rules.hard_bans || [] });
-                            rulesStore.put({ id: 'soft_rules', items: data.rules.soft_rules || [] });
-                            console.log('Rules migrated successfully');
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error migrating rules:', error);
-                    });
             }
         };
 
         request.onsuccess = (event) => {
             db = event.target.result;
             console.log('DB opened successfully');
-            resolve(db);
+            // Seed defaults if stores are empty or missing
+            try {
+                const checkTx = db.transaction(['settings', 'rules'], 'readonly');
+                let needsInventorySeed = false;
+                let needsRulesSeed = false;
+                checkTx.objectStore('settings').get('settings').onsuccess = (e) => {
+                    if (!e.target.result) needsInventorySeed = true;
+                };
+                checkTx.objectStore('rules').get('hard_bans').onsuccess = (e) => {
+                    if (!e.target.result) needsRulesSeed = true;
+                };
+                checkTx.oncomplete = () => {
+                    if (!needsInventorySeed && !needsRulesSeed) {
+                        resolve(db);
+                        return;
+                    }
+                    fetch('data/defaults.json')
+                        .then(response => response.json())
+                        .then(defaults => {
+                            const stores = ['settings', 'spirits', 'mixers', 'additives', 'subpools', 'secondary', 'rules'];
+                            const seedTx = db.transaction(stores, 'readwrite');
+                            if (needsInventorySeed) {
+                                if (defaults.settings) {
+                                    seedTx.objectStore('settings').put({ id: 'settings', ...defaults.settings });
+                                }
+                                if (defaults.inventory) {
+                                    if (defaults.inventory.spirits) {
+                                        defaults.inventory.spirits.forEach(item => seedTx.objectStore('spirits').put(item));
+                                    }
+                                    if (defaults.inventory.mixers) {
+                                        defaults.inventory.mixers.forEach(item => seedTx.objectStore('mixers').put(item));
+                                    }
+                                    if (defaults.inventory.additives) {
+                                        defaults.inventory.additives.forEach(item => seedTx.objectStore('additives').put(item));
+                                    }
+                                }
+                                if (defaults.subpools) {
+                                    Object.keys(defaults.subpools).forEach(key => {
+                                        seedTx.objectStore('subpools').put({ id: key, items: defaults.subpools[key] });
+                                    });
+                                }
+                                if (defaults.secondary) {
+                                    Object.keys(defaults.secondary).forEach(key => {
+                                        seedTx.objectStore('secondary').put({ id: key, items: defaults.secondary[key] });
+                                    });
+                                }
+                            }
+                            if (needsRulesSeed && defaults.rules) {
+                                seedTx.objectStore('rules').put({ id: 'hard_bans', items: defaults.rules.hard_bans || [] });
+                                seedTx.objectStore('rules').put({ id: 'soft_rules', items: defaults.rules.soft_rules || [] });
+                            }
+                            seedTx.oncomplete = () => {
+                                console.log('Defaults seeded as needed');
+                                resolve(db);
+                            };
+                            seedTx.onerror = (e) => {
+                                console.error('Error seeding defaults:', e.target.error);
+                                resolve(db); // Continue even if seeding fails
+                            };
+                        })
+                        .catch((err) => {
+                            console.error('Error fetching defaults for seeding:', err);
+                            resolve(db);
+                        });
+                };
+            } catch (e) {
+                console.warn('Seed check failed:', e);
+                resolve(db);
+            }
         };
 
         request.onerror = (event) => {
@@ -202,13 +210,22 @@ function deleteDB() {
 }
 */
 
+function storeNameForId(id) {
+    const prefix = (id || '').split('.')[0];
+    if (prefix === 'spirits') return 'spirits';
+    if (prefix === 'mixers') return 'mixers';
+    if (prefix === 'add' || prefix === 'additives') return 'additives';
+    // Fallback: assume exact match
+    return prefix;
+}
+
 export function updateItem(item) {
     return new Promise((resolve, reject) => {
         if (!db) {
             reject('DB not initialized');
             return;
         }
-        const storeName = item.id.split('.')[0] + 's'; // e.g. spirits, mixers
+        const storeName = storeNameForId(item.id);
         const tx = db.transaction(storeName, 'readwrite');
         const store = tx.objectStore(storeName);
         const request = store.put(item);
@@ -223,7 +240,7 @@ export function deleteItem(itemId) {
             reject('DB not initialized');
             return;
         }
-        const storeName = itemId.split('.')[0] + 's'; // e.g. spirits, mixers
+        const storeName = storeNameForId(itemId);
         const tx = db.transaction(storeName, 'readwrite');
         const store = tx.objectStore(storeName);
         const request = store.delete(itemId);
@@ -238,12 +255,126 @@ export function addItem(item) {
             reject('DB not initialized');
             return;
         }
-        const storeName = item.id.split('.')[0] + 's'; // e.g. spirits, mixers
+        const storeName = storeNameForId(item.id);
         const tx = db.transaction(storeName, 'readwrite');
         const store = tx.objectStore(storeName);
         const request = store.add(item);
         request.onsuccess = () => resolve();
         request.onerror = (event) => reject(event.target.error);
+    });
+}
+
+// Create a new subpool record
+export function addSubpool(subpoolId, initialItems = []) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject('DB not initialized');
+            return;
+        }
+        const tx = db.transaction('subpools', 'readwrite');
+        const store = tx.objectStore('subpools');
+        const getReq = store.get(subpoolId);
+        getReq.onsuccess = () => {
+            if (getReq.result) {
+                resolve(); // already exists
+                return;
+            }
+            const putReq = store.put({ id: subpoolId, items: initialItems });
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = (e) => reject(e.target.error);
+        };
+        getReq.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// Update an item inside a subpool (e.g., Whiskey family brand)
+export function updateSubpoolItem(subpoolId, updatedItem) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject('DB not initialized');
+            return;
+        }
+        const tx = db.transaction('subpools', 'readwrite');
+        const store = tx.objectStore('subpools');
+        const getReq = store.get(subpoolId);
+        getReq.onsuccess = () => {
+            const record = getReq.result;
+            if (!record) { reject(new Error('Subpool not found')); return; }
+            const idx = (record.items || []).findIndex(i => i.id === updatedItem.id);
+            if (idx === -1) { reject(new Error('Item not found in subpool')); return; }
+            record.items[idx] = updatedItem;
+            const putReq = store.put(record);
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = e => reject(e.target.error);
+        };
+        getReq.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// Add a new item into a subpool
+export function addSubpoolItem(subpoolId, newItem) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject('DB not initialized');
+            return;
+        }
+        const tx = db.transaction('subpools', 'readwrite');
+        const store = tx.objectStore('subpools');
+        const getReq = store.get(subpoolId);
+        getReq.onsuccess = () => {
+            const record = getReq.result;
+            if (!record) { reject(new Error('Subpool not found')); return; }
+            if (!Array.isArray(record.items)) record.items = [];
+            record.items.push(newItem);
+            const putReq = store.put(record);
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = e => reject(e.target.error);
+        };
+        getReq.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// Create a new secondary pool record (e.g., sec.foam)
+export function addSecondaryPool(poolId, initialItems = []) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject('DB not initialized');
+            return;
+        }
+        const tx = db.transaction('secondary', 'readwrite');
+        const store = tx.objectStore('secondary');
+        const getReq = store.get(poolId);
+        getReq.onsuccess = () => {
+            if (getReq.result) { resolve(); return; }
+            const putReq = store.put({ id: poolId, items: initialItems });
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = (e) => reject(e.target.error);
+        };
+        getReq.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// Update an item inside a secondary pool
+export function updateSecondaryItem(poolId, updatedItem) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject('DB not initialized');
+            return;
+        }
+        const tx = db.transaction('secondary', 'readwrite');
+        const store = tx.objectStore('secondary');
+        const getReq = store.get(poolId);
+        getReq.onsuccess = () => {
+            const record = getReq.result;
+            if (!record) { reject(new Error('Secondary pool not found')); return; }
+            const idx = (record.items || []).findIndex(i => i.id === updatedItem.id);
+            if (idx === -1) { reject(new Error('Item not found in secondary pool')); return; }
+            record.items[idx] = updatedItem;
+            const putReq = store.put(record);
+            putReq.onsuccess = () => resolve();
+            putReq.onerror = (e) => reject(e.target.error);
+        };
+        getReq.onerror = (e) => reject(e.target.error);
     });
 }
 

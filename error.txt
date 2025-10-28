@@ -1,0 +1,13 @@
+three.min.js:1 Scripts "build/three.js" and "build/three.min.js" are deprecated with r150+, and will be removed with r160. Please use ES Modules or alternatives: https://threejs.org/docs/index.html#manual/en/introduction/Installation
+
+drinkFlow.js:434 Uncaught ReferenceError: createRollAdditivesState is not defined
+    at registerDrinkFlowStates (drinkFlow.js:434:5)
+    at registerAllStates (index.js:14:5)
+    at app.js:20:1
+index.html:31 SW registered:  
+ServiceWorkerRegistration
+sw.js:31 Opened cache
+reporting.js:33 WTM Reporting: failed to record context from mousedown
+﻿
+
+

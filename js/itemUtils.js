@@ -2,7 +2,7 @@
 // Item-related utility functions
 
 import { cryptoRoll, weightedCryptoChoice } from './rng.js';
-import { getSoftWeight, violatesHardBan } from './rules.js';
+import { getSoftWeight } from './rules.js';
 import { state } from './stateManager.js';
 import { playRollSound, playJokerSound, playConfirmSound } from './sfx.js';
 import { transitionTo } from './stateManager.js';
@@ -31,6 +31,42 @@ export async function rollForUniqueItems(category, numToRoll, availableItems) {
         const weights = remainingItems.map(item => getSoftWeight(item, state.selectedItems.concat(rolledItems), data.rules.soft_rules));
         const selectedItem = weightedCryptoChoice(remainingItems, weights);
         
+        rolledItems.push(selectedItem);
+        remainingItems = remainingItems.filter(item => item.id !== selectedItem.id);
+    }
+
+    return rolledItems;
+}
+
+// UI-aware variant: when Joker occurs, prompt the user to manually select
+export async function rollForUniqueItemsManual(category, numToRoll, availableItems) {
+    const rolledItems = [];
+    let remainingItems = [...availableItems];
+
+    for (let i = 0; i < numToRoll; i++) {
+        if (remainingItems.length === 0) break;
+
+        const isJoker = cryptoRoll(20) === 20;
+        if (isJoker && typeof document !== 'undefined' && typeof displayDealersChoiceForBatch === 'function') {
+            const typeToken = category === 'spirit_family' ? 'spirit_family' : (category === 'secondary' ? 'secondary' : category);
+            const picked = await new Promise(resolve => {
+                displayDealersChoiceForBatch(typeToken, remainingItems, (pick) => resolve(pick));
+            });
+            if (picked) {
+                rolledItems.push(picked);
+                remainingItems = remainingItems.filter(item => item.id !== picked.id);
+                continue;
+            }
+        }
+
+        // Fallback or non-Joker path: weighted choice
+        const weights = remainingItems.map(item => {
+            const base = typeof item.weight === 'number' ? item.weight : 1;
+            const soft = getSoftWeight(item, state.selectedItems.concat(rolledItems), (data && data.rules && data.rules.soft_rules) ? data.rules.soft_rules : []);
+            return base * soft;
+        });
+        const selectedItem = weightedCryptoChoice(remainingItems, weights);
+        if (!selectedItem) break;
         rolledItems.push(selectedItem);
         remainingItems = remainingItems.filter(item => item.id !== selectedItem.id);
     }
@@ -183,5 +219,41 @@ export function displayDealersChoice(type, candidates) {
             }
             transitionTo('PICKS');
         });
+    });
+}
+
+// Dealer's Choice for batch selection steps. Lets the user manually
+// pick from candidates and returns the choice via callback without
+// advancing global state.
+export function displayDealersChoiceForBatch(type, candidates, onChoose) {
+    playJokerSound();
+    const html = `
+        <div id="dealers-choice-modal" style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000;">
+            <div style="background: #222; padding: 20px; border-radius: 8px; max-width: 520px; width: 86%;">
+                <h2>Dealer's Choice</h2>
+                <p>Select your ${type}:</p>
+                <div class="choice-grid">
+                    ${candidates.map(c => `<button class="choice-btn" data-id="${c.id}">${c.name}</button>`).join('')}
+                </div>
+                <div style="text-align:right; margin-top: 10px;"><button id="dc-cancel">Cancel</button></div>
+            </div>
+        </div>`;
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    document.body.appendChild(container.firstElementChild);
+
+    document.querySelectorAll('#dealers-choice-modal .choice-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            const item = candidates.find(c => c.id === id);
+            const modal = document.getElementById('dealers-choice-modal');
+            if (modal) modal.remove();
+            if (item && typeof onChoose === 'function') onChoose(item);
+        });
+    });
+    const cancel = document.getElementById('dc-cancel');
+    if (cancel) cancel.addEventListener('click', () => {
+        const modal = document.getElementById('dealers-choice-modal');
+        if (modal) modal.remove();
     });
 }

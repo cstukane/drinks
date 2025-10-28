@@ -1,0 +1,1788 @@
+// stateManager.js
+// Handles application state and state transitions
+
+import { initDB, getData } from './storage.js';
+import { violatesHardBan, getSoftWeight } from './rules.js';
+import { cryptoRoll, cryptoChoice, weightedCryptoChoice } from './rng.js';
+import { generateRecipeDetails } from './measure.js';
+import { generateSVG, downloadSVG, encodeShareCode, decodeShareCode } from './exporter.js';
+import { rollForUniqueItems, rollForUniqueItemsManual, findItem, displayDealersChoiceForBatch } from './itemUtils.js';
+import { addProgressStep, initProgressDrawer, progressDrawer } from './progressDrawer.js';
+import { highlightAndSlideUp, showNoSolutionMessage } from './uiHelpers.js';
+
+// Global application state
+export const state = {
+    currentState: 'LOADING',
+    sessionActive: false,
+    recipe: {
+        spirits: [],
+        spiritFamilies: [],
+        mixers: [],
+        additives: [],
+        secondaries: []
+    },
+    rerollTokens: 1,
+    selectedItems: []
+};
+
+let data = {};
+
+// State definitions
+export const states = {
+    LOADING: {
+        enter: async () => {
+            console.log('Entering LOADING state');
+            const appContainer = document.getElementById('app-container');
+            appContainer.innerHTML = '<h2>Loading...</h2>';
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            try {
+                await initDB();
+                data = await getData();
+                window.setData(data); // Update data in itemUtils
+                console.log('Data loaded', data);
+                // Initialize progress drawer
+                initProgressDrawer();
+                // If URL includes a share code, decode it and offer to save to Recipe Book
+                const hash = (window.location && window.location.hash) ? window.location.hash.slice(1) : '';
+                if (hash) {
+                    try {
+                        const decoded = decodeShareCode(hash);
+                        if (decoded) {
+                            // Show modal to confirm save or view only
+                            window.showShareCodeImportModal(decoded);
+                        } else {
+                            transitionTo('IDLE');
+                        }
+                    } catch (e) {
+                        console.warn('Invalid share code in URL:', e);
+                        transitionTo('IDLE');
+                    }
+                } else {
+                    transitionTo('IDLE');
+                }
+            } catch (error) {
+                console.error('Failed to initialize and load data:', error);
+                const appContainer = document.getElementById('app-container');
+                appContainer.innerHTML = '<h2>Error loading data. Please refresh.</h2>';
+            }
+        }
+    },
+    IDLE: {
+        enter: () => {
+            console.log('Entering IDLE state');
+            const appContainer = document.getElementById('app-container');
+            state.sessionActive = false;
+            state.rerollTokens = 1;
+            state.selectedItems = [];
+            state.recipe = { 
+                spirits: [], 
+                spiritFamilies: [], 
+                mixers: [], 
+                additives: [],
+                secondaries: []
+            };
+            appContainer.innerHTML = `
+                <div class="home-container">
+                    <button id="roll-cta" aria-label="Start a new roll">Roll</button>
+                </div>
+                <div class="bottom-nav" role="navigation" aria-label="Home navigation">
+                    <button id="inventory-nav">Inventory</button>
+                    <button id="recipe-book-nav">Recipe Book</button>
+                    <button id="settings-nav">Settings</button>
+                </div>
+            `;
+            document.getElementById('roll-cta').addEventListener('click', () => transitionTo('DRINK_TYPE'));
+            document.getElementById('inventory-nav').addEventListener('click', () => transitionTo('INVENTORY'));
+            document.getElementById('recipe-book-nav').addEventListener('click', () => transitionTo('RECIPE_BOOK'));
+            document.getElementById('settings-nav').addEventListener('click', () => transitionTo('SETTINGS'));
+
+            // Reset and hide progress drawer when returning to IDLE
+            initProgressDrawer();
+            // Reset open state at session end per Phase 5
+            try { progressDrawer.isOpen = true; } catch {}
+            const progressContainer = document.getElementById('progress-drawer-container');
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+        },
+        exit: () => {
+            console.log('Exiting IDLE state');
+        }
+    },
+    DRINK_TYPE: {
+        enter: () => {
+            console.log('Entering DRINK_TYPE state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            state.sessionActive = true;
+            
+            // Add to progress
+            initProgressDrawer();
+            addProgressStep('New Drink');
+            
+            appContainer.innerHTML = `
+                <h2>Drink Type</h2>
+                <div class="options-container">
+                    <div class="option-list">
+                        <div class="option" data-type="1">1. Drink</div>
+                        <div class="option" data-type="2">2. Shot</div>
+                        <div class="option" data-type="3">3. Dealer's Choice</div>
+                    </div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-drink-type-btn" class="primary-roll-btn" aria-label="Roll drink type">Roll</button>
+                    <button id="next-drink-type-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm drink type">Next</button>
+                </div>
+            `;
+            
+            const rollBtn = document.getElementById('roll-drink-type-btn');
+            const nextBtn = document.getElementById('next-drink-type-btn');
+            
+            rollBtn.addEventListener('click', () => {
+                // 1-in-20 chance for Dealer's Choice
+                const isJoker = cryptoRoll(20) === 20;
+                let picked;
+                let pickedType;
+                
+                if (isJoker) {
+                    picked = 3; // Dealer's Choice
+                    pickedType = 'joker';
+                } else {
+                    picked = cryptoRoll(2); // 1 or 2
+                    pickedType = picked === 1 ? 'drink' : 'shot';
+                }
+                
+                document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                const selectedOption = document.querySelector(`[data-type="${picked}"]`);
+                if (selectedOption) {
+                    selectedOption.classList.add('highlighted');
+                }
+                
+                state.recipe.type = pickedType;
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+            
+            nextBtn.addEventListener('click', () => {
+                const selectedOption = document.querySelector('.option.highlighted');
+                if (selectedOption) {
+                    highlightAndSlideUp(selectedOption, () => {
+                        if (state.recipe.type === 'joker') {
+                            // For Dealer's Choice, we need to show a special screen
+                            addProgressStep("Dealer's Choice");
+                            transitionTo('METHOD_SELECTION'); // We'll create this state for choosing method manually
+                        } else {
+                            addProgressStep(`Type: ${state.recipe.type.charAt(0).toUpperCase() + state.recipe.type.slice(1)}`);
+                            transitionTo('METHOD', { type: state.recipe.type });
+                        }
+                    });
+                }
+            });
+        },
+        exit: () => {
+            console.log('Exiting DRINK_TYPE state');
+        }
+    },
+    METHOD_SELECTION: {
+        enter: () => {
+            console.log('Entering METHOD_SELECTION state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            
+            appContainer.innerHTML = `
+                <h2>Choose a Method</h2>
+                <p>Dealer's Choice - Select your preferred method:</p>
+                <div class="options-container">
+                    <button class="option" data-method="Shaken">Shaken</button>
+                    <button class="option" data-method="Stirred">Stirred</button>
+                    <button class="option" data-method="Blended">Blended</button>
+                    <button class="option" data-method="Layered">Layered</button>
+                </div>
+                <div class="roll-actions">
+                    <button id="next-method-selection-btn">Next</button>
+                </div>
+            `;
+            
+            document.querySelectorAll('.option').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                    e.target.classList.add('highlighted');
+                    state.recipe.method = e.target.dataset.method;
+                });
+            });
+            
+            document.getElementById('next-method-selection-btn').addEventListener('click', () => {
+                const selectedOption = document.querySelector('.option.highlighted');
+                if (selectedOption) {
+                    highlightAndSlideUp(selectedOption, () => {
+                        addProgressStep(`Method: ${state.recipe.method}`);
+                        transitionTo('HOW_MANY');
+                    });
+                }
+            });
+        },
+        exit: () => {
+            console.log('Exiting METHOD_SELECTION state');
+        }
+    },
+    METHOD: {
+        enter: (context) => {
+            console.log(`Entering METHOD state for: ${context.type}`);
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            state.recipe.type = context.type;
+            
+            // Don't add to progress here since we already did in DRINK_TYPE
+            
+            let methods;
+            if (context.type === 'drink') {
+                methods = ['Shaken', 'Stirred', 'Blended', '🃏'];
+            } else {
+                methods = ['Shaken', 'Stirred', 'Layered', '🃏'];
+            }
+
+            appContainer.innerHTML = `
+                <h2>Choose a Method</h2>
+                <div class="options-container">
+                    ${methods.filter(m => ['Shaken','Stirred','Blended','Layered'].includes(m)).map(m => `<div class="option" data-method="${m}">${m}</div>`).join('')}
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-method-btn" class="primary-roll-btn" aria-label="Roll method">Roll</button>
+                    <button id="next-method-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm method">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-method-btn');
+            const nextBtn = document.getElementById('next-method-btn');
+
+            rollBtn.addEventListener('click', async () => {
+                const methodsCore = (state.recipe.type === 'drink')
+                    ? ['Shaken', 'Stirred', 'Blended']
+                    : ['Shaken', 'Stirred', 'Layered'];
+
+                const joker = cryptoRoll(20) === 20; // 1-in-20 Dealer's Choice
+                if (joker) {
+                    // Trigger manual method selection instead of auto-picking
+                    transitionTo('METHOD_SELECTION');
+                    return;
+                }
+                let picked;
+                if (joker) {
+                    picked = '🃏';
+                } else {
+                    picked = cryptoChoice(methodsCore);
+                }
+
+                const optionsContainer = document.querySelector('.options-container');
+                
+                if (methodsCore.length <= 2) {
+                    optionsContainer.innerHTML = ''; // Clear options
+                    window.coinFlip({ parent: optionsContainer, onComplete: () => {
+                        document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                        const selectedOption = document.querySelector(`[data-method="${picked}"]`);
+                        if (selectedOption) {
+                            selectedOption.classList.add('highlighted');
+                        }
+                        state.recipe.method = picked;
+                        rollBtn.style.display = 'none';
+                        nextBtn.style.display = 'inline-block';
+                    }});
+                } else {
+                    document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                    const selectedOption = document.querySelector(`[data-method="${picked}"]`);
+                    if (selectedOption) {
+                        selectedOption.classList.add('highlighted');
+                    }
+    
+                    state.recipe.method = picked;
+                    rollBtn.style.display = 'none';
+                    nextBtn.style.display = 'inline-block';
+                }
+            });
+
+            nextBtn.addEventListener('click', () => {
+                const selectedOption = document.querySelector('.option.highlighted');
+                if (selectedOption) {
+                    highlightAndSlideUp(selectedOption, () => {
+                        addProgressStep(`Method: ${state.recipe.method}`);
+                        if (state.recipe.type === 'drink') {
+                            transitionTo('ROCKS_NEAT');
+                        } else {
+                            transitionTo('HOW_MANY');
+                        }
+                    });
+                }
+            });
+        },
+        exit: () => {
+            console.log('Exiting METHOD state');
+        }
+    },
+    ROCKS_NEAT: {
+        enter: () => {
+            console.log('Entering ROCKS_NEAT state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            const options = ['Rocks', 'Neat'];
+
+            appContainer.innerHTML = `
+                <h2>Style</h2>
+                <div class="options-container">
+                    ${options.map(o => `<div class="option" data-style="${o}">${o}</div>`).join('')}
+                    <div class="coin-overlay" style="display:none;"></div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-style-btn">Roll</button>
+                    <button id="next-style-btn" style="display:none;">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-style-btn');
+            const nextBtn = document.getElementById('next-style-btn');
+
+            rollBtn.addEventListener('click', () => {
+                const picked = cryptoChoice(options);
+                const optionsContainer = document.querySelector('.options-container');
+                const overlay = optionsContainer.querySelector('.coin-overlay');
+                if (overlay) {
+                    overlay.style.display = 'block';
+                    window.coinFlip({ parent: overlay, onComplete: () => {
+                        overlay.style.display = 'none';
+                        document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                        const selectedOption = document.querySelector(`[data-style="${picked}"]`);
+                        if (selectedOption) {
+                            selectedOption.classList.add('highlighted');
+                        }
+                        state.recipe.style = picked;
+                        rollBtn.style.display = 'none';
+                        nextBtn.style.display = 'inline-block';
+                    }});
+                } else {
+                    // Fallback: no overlay container
+                    document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                    const selectedOption = document.querySelector(`[data-style="${picked}"]`);
+                    if (selectedOption) selectedOption.classList.add('highlighted');
+                    state.recipe.style = picked;
+                    rollBtn.style.display = 'none';
+                    nextBtn.style.display = 'inline-block';
+                }
+            });
+
+            nextBtn.addEventListener('click', () => {
+                const selectedOption = document.querySelector('.option.highlighted');
+                if (selectedOption) {
+                    highlightAndSlideUp(selectedOption, () => {
+                        addProgressStep(`Style: ${state.recipe.style}`);
+                        transitionTo('HOW_MANY');
+                    });
+                }
+            });
+        },
+        exit: () => {
+            console.log('Exiting ROCKS_NEAT state');
+        }
+    },
+    HOW_MANY: {
+        enter: () => {
+            console.log('Entering HOW_MANY state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            appContainer.innerHTML = `
+                <h2>How Many?</h2>
+                <div class="options-container">
+                    <div class="option-list">
+                        <div class="option" data-type="spirits">Spirits</div>
+                        <div class="option" data-type="mixers">Mixers</div>
+                        <div class="option" data-type="additives">Additives</div>
+                    </div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-how-many-btn" class="primary-roll-btn" aria-label="Roll counts">Roll</button>
+                    <button id="next-how-many-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm counts">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-how-many-btn');
+            const nextBtn = document.getElementById('next-how-many-btn');
+
+            rollBtn.addEventListener('click', () => {
+                const numSpirits = cryptoRoll(3);
+                const numMixers = cryptoRoll(4);
+                const numAdditives = cryptoRoll(2);
+
+                document.querySelector('[data-type="spirits"]').textContent = `${numSpirits} Spirits`;
+                document.querySelector('[data-type="mixers"]').textContent = `${numMixers} Mixers`;
+                document.querySelector('[data-type="additives"]').textContent = `${numAdditives} Additives`;
+
+                state.recipe.numSpirits = numSpirits;
+                state.recipe.numMixers = numMixers;
+                state.recipe.numAdditives = numAdditives;
+
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+
+            nextBtn.addEventListener('click', () => {
+                addProgressStep(`How Many: ${state.recipe.numSpirits} Spirits, ${state.recipe.numMixers} Mixers, ${state.recipe.numAdditives} Additives`);
+                transitionTo('ROLL_SPIRITS');
+            });
+        },
+        exit: () => {
+            console.log('Exiting HOW_MANY state');
+        }
+    },
+    ROLL_SPIRITS: {
+        enter: () => {
+            console.log('Entering ROLL_SPIRITS state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            
+            // Get all available spirits
+            const allSpirits = data.inventory.spirits.filter(spirit => 
+                spirit.type !== 'family' && spirit.in_rotation);
+            
+            // Create list of spirits with numbers
+            let spiritList = '';
+            allSpirits.forEach((spirit, index) => {
+                spiritList += `<div class="option" data-id="${spirit.id}">${index + 1}. ${spirit.name}</div>`;
+            });
+            
+            appContainer.innerHTML = `
+                <h2>Select ${state.recipe.numSpirits} Spirit${state.recipe.numSpirits !== 1 ? 's' : ''}</h2>
+                <div class="options-container">
+                    <div class="option-list">
+                        ${spiritList}
+                    </div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-spirits-btn" class="primary-roll-btn" aria-label="Roll spirits">Roll</button>
+                    <button id="next-spirits-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm spirits">Next</button>
+                </div>
+            `;
+            
+            const rollBtn = document.getElementById('roll-spirits-btn');
+            const nextBtn = document.getElementById('next-spirits-btn');
+            const optionsContainer = document.querySelector('.option-list');
+            
+            // Store selected spirits
+            let selectedSpirits = [];
+            let rollCount = 0;
+
+            rollBtn.addEventListener('click', () => {
+                if (rollCount >= state.recipe.numSpirits) return;
+
+                // Build allowed set: in rotation, not already chosen in this batch,
+                // and not hard-banned against previously locked picks
+                const alreadyIds = new Set(selectedSpirits.map(s => s.id));
+                const allowed = allSpirits
+                    .filter(s => !alreadyIds.has(s.id))
+                    .filter(s => !violatesHardBan(s, state.selectedItems, data.rules?.hard_bans || []));
+
+                if (allowed.length === 0) {
+                    showNoSolutionMessage('No compatible spirits available given prior selections.');
+                    return;
+                }
+
+                // Joker: 1-in-20 triggers Dealer's Choice (manual pick)
+                const joker = cryptoRoll(20) === 20;
+                if (joker) {
+                    displayDealersChoiceForBatch('spirit', allowed, (pick) => {
+                        const el = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                        if (el && !el.classList.contains('highlighted')) {
+                            el.classList.add('highlighted');
+                            selectedSpirits.push(pick);
+                            rollCount++;
+                            if (rollCount >= state.recipe.numSpirits) {
+                                rollBtn.style.display = 'none';
+                                nextBtn.style.display = 'inline-block';
+                            }
+                        }
+                    });
+                } else {
+                    // Weights: base (default 1) * soft weight vs locked picks only
+                    const weights = allowed.map(s => {
+                        const base = typeof s.weight === 'number' ? s.weight : 1;
+                        return base * getSoftWeight(s, state.selectedItems, data.rules?.soft_rules || []);
+                    });
+
+                    const pick = weightedCryptoChoice(allowed, weights);
+
+                    // Highlight picked option in the list
+                    const pickedEl = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                    if (pickedEl && !pickedEl.classList.contains('highlighted')) {
+                        pickedEl.classList.add('highlighted');
+                        selectedSpirits.push(pick);
+                        rollCount++;
+                    }
+                }
+
+                if (rollCount >= state.recipe.numSpirits) {
+                    rollBtn.style.display = 'none';
+                    nextBtn.style.display = 'inline-block';
+                }
+            });
+            
+            nextBtn.addEventListener('click', () => {
+                // Slide all selected spirits up to progress
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+
+                setTimeout(() => {
+                    // Add all selected spirits to the recipe and lock them
+                    state.recipe.spirits = selectedSpirits;
+                    state.selectedItems.push(...selectedSpirits);
+                    addProgressStep(`${selectedSpirits.length} Spirits`);
+                    transitionTo('ROLL_MIXERS');
+                }, 500);
+            });
+        },
+        exit: () => {
+            console.log('Exiting ROLL_SPIRITS state');
+        }
+    },
+    ROLL_MIXERS: {
+        enter: () => {
+            console.log('Entering ROLL_MIXERS state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            
+            // Get all available mixers
+            const allMixers = data.inventory.mixers.filter(mixer => mixer.in_rotation);
+            
+            // Create list of mixers with numbers
+            let mixerList = '';
+            allMixers.forEach((mixer, index) => {
+                mixerList += `<div class="option" data-id="${mixer.id}">${index + 1}. ${mixer.name}</div>`;
+            });
+            
+            appContainer.innerHTML = `
+                <h2>Select ${state.recipe.numMixers} Mixer${state.recipe.numMixers !== 1 ? 's' : ''}</h2>
+                <div class="options-container">
+                    <div class="option-list">
+                        ${mixerList}
+                    </div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-mixers-btn" class="primary-roll-btn" aria-label="Roll mixers">Roll</button>
+                    <button id="next-mixers-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm mixers">Next</button>
+                </div>
+            `;
+            
+            const rollBtn = document.getElementById('roll-mixers-btn');
+            const nextBtn = document.getElementById('next-mixers-btn');
+            const optionsContainer = document.querySelector('.option-list');
+            
+            // Store selected mixers
+            let selectedMixers = [];
+            let rollCount = 0;
+
+            rollBtn.addEventListener('click', () => {
+                if (rollCount >= state.recipe.numMixers) return;
+
+                // Build allowed set: not already picked this batch and not hard-banned vs locked picks
+                const alreadyIds = new Set(selectedMixers.map(m => m.id));
+                const allowed = allMixers
+                    .filter(m => !alreadyIds.has(m.id))
+                    .filter(m => !violatesHardBan(m, state.selectedItems, data.rules?.hard_bans || []));
+
+                if (allowed.length === 0) {
+                    showNoSolutionMessage('No compatible mixers available given prior selections.');
+                    return;
+                }
+
+                const joker = cryptoRoll(20) === 20;
+                if (joker) {
+                    displayDealersChoiceForBatch('mixer', allowed, (pick) => {
+                        const el = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                        if (el && !el.classList.contains('highlighted')) {
+                            el.classList.add('highlighted');
+                            selectedMixers.push(pick);
+                            rollCount++;
+                            if (rollCount >= state.recipe.numMixers) {
+                                rollBtn.style.display = 'none';
+                                nextBtn.style.display = 'inline-block';
+                            }
+                        }
+                    });
+                } else {
+                    const weights = allowed.map(m => {
+                        const base = typeof m.weight === 'number' ? m.weight : 1;
+                        return base * getSoftWeight(m, state.selectedItems, data.rules?.soft_rules || []);
+                    });
+                    const pick = weightedCryptoChoice(allowed, weights);
+
+                    const pickedEl = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                    if (pickedEl && !pickedEl.classList.contains('highlighted')) {
+                        pickedEl.classList.add('highlighted');
+                        selectedMixers.push(pick);
+                        rollCount++;
+                    }
+                }
+
+                if (rollCount >= state.recipe.numMixers) {
+                    rollBtn.style.display = 'none';
+                    nextBtn.style.display = 'inline-block';
+                }
+            });
+            
+            nextBtn.addEventListener('click', () => {
+                // Slide all selected mixers up to progress
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+
+                setTimeout(() => {
+                    // Add all selected mixers to the recipe and lock them
+                    state.recipe.mixers = selectedMixers;
+                    state.selectedItems.push(...selectedMixers);
+                    addProgressStep(`${selectedMixers.length} Mixers`);
+                    transitionTo('ROLL_ADDITIVES');
+                }, 500);
+            });
+        },
+        exit: () => {
+            console.log('Exiting ROLL_MIXERS state');
+        }
+    },
+    ROLL_ADDITIVES: {
+        enter: () => {
+            console.log('Entering ROLL_ADDITIVES state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+            
+            // Get all available additives
+            const allAdditives = data.inventory.additives.filter(additive => additive.in_rotation);
+            
+            // Create list of additives with numbers
+            let additiveList = '';
+            allAdditives.forEach((additive, index) => {
+                additiveList += `<div class="option" data-id="${additive.id}">${index + 1}. ${additive.name}</div>`;
+            });
+            
+            appContainer.innerHTML = `
+                <h2>Select ${state.recipe.numAdditives} Additive${state.recipe.numAdditives !== 1 ? 's' : ''}</h2>
+                <div class="options-container">
+                    <div class="option-list">
+                        ${additiveList}
+                    </div>
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-additives-btn" class="primary-roll-btn" aria-label="Roll additives">Roll</button>
+                    <button id="next-additives-btn" class="primary-roll-btn" style="display:none;" aria-label="Next: confirm additives">Next</button>
+                </div>
+            `;
+            
+            const rollBtn = document.getElementById('roll-additives-btn');
+            const nextBtn = document.getElementById('next-additives-btn');
+            const optionsContainer = document.querySelector('.option-list');
+            
+            // Store selected additives
+            let selectedAdditives = [];
+            let rollCount = 0;
+
+            rollBtn.addEventListener('click', () => {
+                if (rollCount >= state.recipe.numAdditives) return;
+
+                // Build allowed set: not already picked this batch and not hard-banned vs locked picks
+                const alreadyIds = new Set(selectedAdditives.map(a => a.id));
+                const allowed = allAdditives
+                    .filter(a => !alreadyIds.has(a.id))
+                    .filter(a => !violatesHardBan(a, state.selectedItems, data.rules?.hard_bans || []));
+
+                if (allowed.length === 0) {
+                    showNoSolutionMessage('No compatible additives available given prior selections.');
+                    return;
+                }
+
+                const joker = cryptoRoll(20) === 20;
+                if (joker) {
+                    displayDealersChoiceForBatch('additive', allowed, (pick) => {
+                        const el = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                        if (el && !el.classList.contains('highlighted')) {
+                            el.classList.add('highlighted');
+                            selectedAdditives.push(pick);
+                            rollCount++;
+                            if (rollCount >= state.recipe.numAdditives) {
+                                rollBtn.style.display = 'none';
+                                nextBtn.style.display = 'inline-block';
+                            }
+                        }
+                    });
+                } else {
+                    const weights = allowed.map(a => {
+                        const base = typeof a.weight === 'number' ? a.weight : 1;
+                        return base * getSoftWeight(a, state.selectedItems, data.rules?.soft_rules || []);
+                    });
+                    const pick = weightedCryptoChoice(allowed, weights);
+
+                    const pickedEl = optionsContainer.querySelector(`[data-id="${pick.id}"]`);
+                    if (pickedEl && !pickedEl.classList.contains('highlighted')) {
+                        pickedEl.classList.add('highlighted');
+                        selectedAdditives.push(pick);
+                        rollCount++;
+                    }
+                }
+
+                if (rollCount >= state.recipe.numAdditives) {
+                    rollBtn.style.display = 'none';
+                    nextBtn.style.display = 'inline-block';
+                }
+            });
+            
+            nextBtn.addEventListener('click', () => {
+                // Slide all selected additives up to progress
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+
+                setTimeout(() => {
+                    // Add all selected additives to the recipe and lock them
+                    state.recipe.additives = selectedAdditives;
+                    state.selectedItems.push(...selectedAdditives);
+                    addProgressStep(`${selectedAdditives.length} Additives`);
+
+                    // Check if we need to pick secondary items
+                    const mixersRequiringSecondary = state.recipe.mixers.filter(m => m.requires_secondary);
+                    const additivesRequiringSecondary = state.recipe.additives.filter(a => a.requires_secondary);
+
+                    if (mixersRequiringSecondary.length > 0 || additivesRequiringSecondary.length > 0) {
+                        transitionTo('PICK_SECONDARY');
+                    } else {
+                        transitionTo('RECIPE');
+                    }
+                }, 500);
+            });
+        },
+        exit: () => {
+            console.log('Exiting ROLL_ADDITIVES state');
+        }
+    },
+    PICKS: {
+        enter: () => {
+            console.log('Entering PICKS state');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            // Initialize arrays if they don't exist
+            if (!state.recipe.spiritFamilies) {
+                state.recipe.spiritFamilies = [];
+            }
+            if (!state.recipe.secondaries) {
+                state.recipe.secondaries = [];
+            }
+            
+            // Check if we need to pick spirit families first
+            if (state.recipe.spiritFamilies.length < state.recipe.numSpirits) {
+                transitionTo('PICK_SPIRIT_FAMILY');
+            } else if (state.recipe.spirits.length < state.recipe.numSpirits) {
+                transitionTo('PICK_SPIRIT');
+            } else if (state.recipe.mixers.length < state.recipe.numMixers) {
+                transitionTo('PICK_MIXER');
+            } else if (state.recipe.additives.length < state.recipe.numAdditives) {
+                transitionTo('PICK_ADDITIVE');
+            } else {
+                // Check if we need to pick secondary items for mixers
+                const mixersRequiringSecondary = state.recipe.mixers.filter(m => m.requires_secondary);
+                const mixerSecondaries = state.recipe.secondaries.filter(s => s.parentType === 'mixer');
+                if (mixersRequiringSecondary.length > mixerSecondaries.length) {
+                    transitionTo('PICK_SECONDARY');
+                    return;
+                } 
+                // Check if we need to pick secondary items for additives
+                const additivesRequiringSecondary = state.recipe.additives.filter(a => a.requires_secondary);
+                const additiveSecondaries = state.recipe.secondaries.filter(s => s.parentType === 'additive');
+                if (additivesRequiringSecondary.length > additiveSecondaries.length) {
+                    transitionTo('PICK_SECONDARY');
+                    return;
+                }
+                transitionTo('RECIPE');
+            }
+        }
+    },
+    PICK_SPIRIT_FAMILY: {
+        enter: async () => {
+            console.log('Entering PICK_SPIRIT_FAMILY state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            const spiritFamilies = data.inventory.spirits.filter(spirit => spirit.type === 'family' && spirit.in_rotation);
+
+            if (spiritFamilies.length === 0) {
+                console.error('No spirit families available');
+                return;
+            }
+
+            let rolledFamilies = [];
+
+            appContainer.innerHTML = `
+                <h2>Spirit Families</h2>
+                <div class="options-container">
+                    ${spiritFamilies.map(f => `<div class="option" data-name="${f.name}">${f.name}</div>`).join('')}
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-spirit-family-btn">Roll</button>
+                    <button id="next-spirit-family-btn" style="display:none;">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-spirit-family-btn');
+            const nextBtn = document.getElementById('next-spirit-family-btn');
+
+            rollBtn.addEventListener('click', async () => {
+                rolledFamilies = await rollForUniqueItemsManual('spirit_family', state.recipe.numSpirits, spiritFamilies);
+                document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                rolledFamilies.forEach(f => {
+                    const el = document.querySelector(`.option[data-name="${f.name}"]`);
+                    if (el) el.classList.add('highlighted');
+                });
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+
+            nextBtn.addEventListener('click', () => {
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+                setTimeout(() => {
+                    state.recipe.spiritFamilies.push(...rolledFamilies);
+                    addProgressStep(`${rolledFamilies.length} Spirit Families`);
+                    transitionTo('ROLL_SPIRITS');
+                }, 500);
+            });
+        }
+    },
+    PICK_SPIRIT: {
+        enter: async () => {
+            console.log('Entering PICK_SPIRIT state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            let rolledSpirits = [];
+
+            appContainer.innerHTML = `
+                <h2>Spirits</h2>
+                <div class="options-container" id="spirits-results">
+                    <!-- Roll to reveal selected spirits -->
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-spirits-btn">Roll</button>
+                    <button id="next-spirits-btn" style="display:none;">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-spirits-btn');
+            const nextBtn = document.getElementById('next-spirits-btn');
+            const results = document.getElementById('spirits-results');
+
+            rollBtn.addEventListener('click', async () => {
+                rolledSpirits = [];
+                for (const family of state.recipe.spiritFamilies) {
+                    let subpoolItems = [];
+                    if (family.subpool_id && data.subpools[family.subpool_id]) {
+                        subpoolItems = data.subpools[family.subpool_id].filter(item => item.in_rotation);
+                    }
+
+                    if (subpoolItems.length === 0) {
+                        rolledSpirits.push(family);
+                        continue;
+                    }
+
+                    const availableItems = subpoolItems.filter(item => !violatesHardBan(item, state.selectedItems.concat(rolledSpirits), data.rules.hard_bans));
+                    if (availableItems.length === 0) {
+                        showNoSolutionMessage('No compatible spirits available in this category.');
+                        return;
+                    }
+
+                    // Allow Dealer's Choice (joker) for brand within family
+                    const joker = cryptoRoll(20) === 20;
+                    let spirit;
+                    if (joker) {
+                        spirit = await new Promise(resolve => {
+                            displayDealersChoiceForBatch('spirit', availableItems, (pick) => resolve(pick));
+                        });
+                    } else {
+                        const weights = availableItems.map(item => getSoftWeight(item, state.selectedItems.concat(rolledSpirits), data.rules.soft_rules));
+                        spirit = weightedCryptoChoice(availableItems, weights);
+                    }
+                    if (spirit) {
+                        rolledSpirits.push(spirit);
+                    }
+                }
+
+                results.innerHTML = rolledSpirits.map(s => `<div class="option highlighted">${s.name}</div>`).join('');
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+
+            nextBtn.addEventListener('click', () => {
+                document.querySelectorAll('#spirits-results .option.highlighted').forEach(option => highlightAndSlideUp(option, () => {}));
+                setTimeout(() => {
+                    state.recipe.spirits.push(...rolledSpirits);
+                    addProgressStep(`${rolledSpirits.length} Spirits`);
+                    transitionTo('PICKS');
+                }, 500);
+            });
+        }
+    },
+    PICK_MIXER: {
+        enter: async () => {
+            console.log('Entering PICK_MIXER state');
+            const appContainer = document.getElementById('app-container');
+            const availableMixers = data.inventory.mixers.filter(mixer => 
+                mixer.in_rotation && !violatesHardBan(mixer, state.selectedItems, data.rules.hard_bans));
+            
+            if (availableMixers.length === 0) {
+                showNoSolutionMessage('No compatible mixers available in this category.');
+                return;
+            }
+
+            let rolledMixers = [];
+
+            appContainer.innerHTML = `
+                <h2>Mixers</h2>
+                <div class="options-container">
+                    ${availableMixers.map(m => `<div class="option" data-name="${m.name}">${m.name}</div>`).join('')}
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-mixers-btn">Roll</button>
+                    <button id="next-mixers-btn" style="display:none;">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-mixers-btn');
+            const nextBtn = document.getElementById('next-mixers-btn');
+
+            rollBtn.addEventListener('click', async () => {
+                rolledMixers = await rollForUniqueItems('mixer', state.recipe.numMixers, availableMixers);
+                document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                rolledMixers.forEach(m => {
+                    const el = document.querySelector(`.option[data-name="${m.name}"]`);
+                    if (el) el.classList.add('highlighted');
+                });
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+
+            nextBtn.addEventListener('click', () => {
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+                setTimeout(() => {
+                    state.recipe.mixers.push(...rolledMixers);
+                    addProgressStep(`${rolledMixers.length} Mixers`);
+                    transitionTo('PICKS');
+                }, 500);
+            });
+        }
+    },
+    PICK_SECONDARY: {
+        enter: () => {
+            console.log('Entering PICK_SECONDARY state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            
+            // Determine what type of parent item needs a secondary
+            let parentItem = null;
+            let parentType = null;
+            
+            // Check mixers first
+            const mixersRequiringSecondary = state.recipe.mixers.filter(m => m.requires_secondary);
+            const mixerSecondaries = state.recipe.secondaries.filter(s => s.parentType === 'mixer');
+            
+            if (mixersRequiringSecondary.length > mixerSecondaries.length) {
+                // Find the last mixer that requires a secondary but doesn't have one yet
+                for (let i = mixersRequiringSecondary.length - 1; i >= 0; i--) {
+                    const mixer = mixersRequiringSecondary[i];
+                    const hasSecondary = state.recipe.secondaries.some(s => s.parentId === mixer.id);
+                    if (!hasSecondary) {
+                        parentItem = mixer;
+                        parentType = 'mixer';
+                        break;
+                    }
+                }
+            } else {
+                // Check additives
+                const additivesRequiringSecondary = state.recipe.additives.filter(a => a.requires_secondary);
+                const additiveSecondaries = state.recipe.secondaries.filter(s => s.parentType === 'additive');
+                
+                if (additivesRequiringSecondary.length > additiveSecondaries.length) {
+                    // Find the last additive that requires a secondary but doesn't have one yet
+                    for (let i = additivesRequiringSecondary.length - 1; i >= 0; i--) {
+                        const additive = additivesRequiringSecondary[i];
+                        const hasSecondary = state.recipe.secondaries.some(s => s.parentId === additive.id);
+                        if (!hasSecondary) {
+                            parentItem = additive;
+                            parentType = 'additive';
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (!parentItem || !parentType) {
+                // This shouldn't happen, but just in case
+                transitionTo('PICKS');
+                return;
+            }
+            
+            // Get items from the secondary pool
+            let secondaryItems = [];
+            if (data.secondary[parentItem.requires_secondary]) {
+                secondaryItems = data.secondary[parentItem.requires_secondary].filter(item => item.in_rotation);
+            }
+
+            if (secondaryItems.length === 0) {
+                // No secondary items available, continue to next pick
+                transitionTo('PICKS');
+                return;
+            }
+
+            // Apply hard bans and soft weights
+            let availableItems = secondaryItems.filter(item => !violatesHardBan(item, state.selectedItems, data.rules.hard_bans));
+            
+            if (availableItems.length === 0) {
+                // Handle no solution - revert one step
+                console.log('No available secondary items after applying hard bans');
+                showNoSolutionMessage('No compatible secondary items available in this category.');
+                return;
+            }
+
+            // Store parent info in each available item for later reference
+            availableItems = availableItems.map(item => ({
+                ...item,
+                parentId: parentItem.id,
+                parentType: parentType
+            }));
+
+            if (cryptoRoll(20) === 20) {
+                window.displayAnimatedPick({ name: '🃏' }, 'secondary', availableItems);
+            } else {
+                const weights = availableItems.map(item => getSoftWeight(item, state.selectedItems, data.rules.soft_rules));
+                let secondary = weightedCryptoChoice(availableItems, weights);
+                window.displayAnimatedPick(secondary, 'secondary', availableItems);
+            }
+        }
+    },
+    PICK_ADDITIVE: {
+        enter: async () => {
+            console.log('Entering PICK_ADDITIVE state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            const availableAdditives = data.inventory.additives.filter(additive => 
+                additive.in_rotation && !violatesHardBan(additive, state.selectedItems, data.rules.hard_bans));
+            
+            if (availableAdditives.length === 0) {
+                showNoSolutionMessage('No compatible additives available in this category.');
+                return;
+            }
+
+            let rolledAdditives = [];
+
+            appContainer.innerHTML = `
+                <h2>Additives</h2>
+                <div class="options-container">
+                    ${availableAdditives.map(a => `<div class="option" data-name="${a.name}">${a.name}</div>`).join('')}
+                </div>
+                <div class="roll-actions">
+                    <button id="roll-additives-btn">Roll</button>
+                    <button id="next-additives-btn" style="display:none;">Next</button>
+                </div>
+            `;
+
+            const rollBtn = document.getElementById('roll-additives-btn');
+            const nextBtn = document.getElementById('next-additives-btn');
+
+            rollBtn.addEventListener('click', async () => {
+                rolledAdditives = await rollForUniqueItemsManual('additive', state.recipe.numAdditives, availableAdditives);
+                document.querySelectorAll('.option').forEach(opt => opt.classList.remove('highlighted'));
+                rolledAdditives.forEach(a => {
+                    const el = document.querySelector(`.option[data-name="${a.name}"]`);
+                    if (el) el.classList.add('highlighted');
+                });
+                rollBtn.style.display = 'none';
+                nextBtn.style.display = 'inline-block';
+            });
+
+            nextBtn.addEventListener('click', () => {
+                const selectedOptions = document.querySelectorAll('.option.highlighted');
+                selectedOptions.forEach(option => highlightAndSlideUp(option, () => {}));
+                setTimeout(() => {
+                    state.recipe.additives.push(...rolledAdditives);
+                    addProgressStep(`${rolledAdditives.length} Additives`);
+                    transitionTo('PICKS');
+                }, 500);
+            });
+        }
+    },
+    RECIPE: {
+        enter: () => {
+            console.log('Entering RECIPE state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            const recipeDetails = generateRecipeDetails(state.recipe);
+
+            let html = '<h2>Your Recipe:</h2>';
+            html += `<h3>${state.recipe.name || 'My Dicey Drink'}</h3>`;
+            html += `<p>Method: ${state.recipe.method}</p>`;
+
+            html += '<h4>Ingredients:</h4><ul>';
+            recipeDetails.ingredientsWithVolumes.forEach(item => {
+                html += `<li>${item.volume} ${item.name}</li>`;
+            });
+            html += '</ul>';
+
+            html += '<h4>Instructions:</h4><ol>';
+            recipeDetails.instructions.forEach(step => {
+                html += `<li>${step}</li>`;
+            });
+            html += '</ol>';
+
+            html += '<button id="export-svg-btn">Export SVG</button>';
+            if (navigator.share) {
+                html += '<button id="share-btn">Share Recipe</button>';
+            }
+            html += '<button id="new-drink-btn">New Drink</button>';
+
+            html += `
+                <hr>
+                <h3>Rate and Save</h3>
+                <form id="save-recipe-form">
+                    <label>Rating (1-5): <input type="number" id="recipe-rating" min="1" max="5" value="5"></label><br>
+                    <label>Notes: <textarea id="recipe-notes"></textarea></label><br>
+                    <button type="submit">Save to Recipe Book</button>
+                </form>
+            `;
+
+            appContainer.innerHTML = html;
+
+            document.getElementById('export-svg-btn').addEventListener('click', () => {
+                const svg = generateSVG(state.recipe, recipeDetails);
+                downloadSVG(svg);
+            });
+
+            if (navigator.share) {
+                document.getElementById('share-btn').addEventListener('click', async () => {
+                    try {
+                        const recipeName = state.recipe.name || 'My Dicey Drink';
+                        const textHeader = `Check out this recipe for ${recipeName}!`;
+
+                        const text = `${textHeader}
+
+Ingredients:
+${recipeDetails.ingredientsWithVolumes.map(i => `- ${i.volume} ${i.name}`).join('\n')}
+
+Instructions:
+${recipeDetails.instructions.map((step, i) => `${i+1}. ${step}`).join('\n')}
+`;
+
+                        await navigator.share({ title: recipeName, text, url: window.location.href });
+                    } catch (error) {
+                        console.log('Sharing failed:', error);
+                        const svg = generateSVG(state.recipe, recipeDetails);
+                        downloadSVG(svg);
+                    }
+                });
+            }
+
+            const shareCodeBtn = document.createElement('button');
+            shareCodeBtn.id = 'share-code-btn';
+            shareCodeBtn.textContent = 'Get Share Code';
+            shareCodeBtn.style.marginLeft = '10px';
+            const exportBtn = document.getElementById('export-svg-btn');
+            if (exportBtn && exportBtn.parentNode) {
+                exportBtn.insertAdjacentElement('afterend', shareCodeBtn);
+            } else {
+                appContainer.appendChild(shareCodeBtn);
+            }
+
+            document.getElementById('share-code-btn').addEventListener('click', () => {
+                const shareCode = encodeShareCode(state.recipe);
+                if (!shareCode) {
+                    alert('Unable to generate share code.');
+                    return;
+                }
+                const baseUrl = window.location.origin + window.location.pathname;
+                const shareUrl = `${baseUrl}#${shareCode}`;
+                (navigator.clipboard && navigator.clipboard.writeText ?
+                    navigator.clipboard.writeText(shareUrl) : Promise.reject()
+                ).then(() => {
+                    alert('Shareable URL copied to clipboard!');
+                }).catch(() => {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = shareUrl;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    alert('Shareable URL copied to clipboard!');
+                });
+            });
+
+            document.getElementById('new-drink-btn').addEventListener('click', () => {
+                transitionTo('IDLE');
+            });
+
+            document.getElementById('save-recipe-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                state.recipe.rating = parseInt(document.getElementById('recipe-rating').value);
+                state.recipe.notes = document.getElementById('recipe-notes').value;
+                state.recipe.date = new Date().toISOString();
+                window.addRecipeToCookbook(state.recipe);
+                addProgressStep('Recipe Saved');
+                transitionTo('RECIPE_BOOK');
+            });
+            
+            // Add progress step for recipe completion
+            addProgressStep('Recipe Complete');
+        },
+        exit: () => {
+            console.log('Exiting RECIPE state');
+        }
+    },
+    INVENTORY: {
+        enter: async () => {
+            console.log('Entering INVENTORY state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+            if (panel) panel.style.display = 'none';
+
+            const renderLanding = () => {
+                let html = `
+                    <h2>Inventory</h2>
+                    <div class="inv-landing" style="display:flex; flex-direction:column; gap:12px; align-items:center;">
+                        <button id="view-inventory" class="primary">View Inventory</button>
+                        <button id="add-item" class="primary">Add Item</button>
+                        <button id="add-category" class="primary">Add Category</button>
+                    </div>
+                    <div style="position:fixed; bottom:16px; left:0; right:0; text-align:center;">
+                        <button id="export-inventory" class="secondary" style="opacity:0.9;">Export Inventory</button>
+                    </div>
+                    <div style="position:fixed; top:16px; left:16px;"><button id="back-to-idle">Back</button></div>
+                `;
+                appContainer.innerHTML = html;
+                document.getElementById('back-to-idle').addEventListener('click', () => transitionTo('IDLE'));
+                document.getElementById('export-inventory').addEventListener('click', () => window.exportInventory());
+                document.getElementById('view-inventory').addEventListener('click', renderList);
+                document.getElementById('add-item').addEventListener('click', openAddModal);
+                document.getElementById('add-category').addEventListener('click', openAddCategoryModal);
+            };
+
+            const slugify = (s) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+            const renderList = async () => {
+                data = await getData();
+                window.setData(data);
+                const families = data.inventory.spirits.filter(s => s.type === 'family');
+                const secondaryKeys = Object.keys(data.secondary || {});
+                let html = `
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+                        <button id="inv-back" class="secondary">Back</button>
+                        <h2 style="margin:0;">Inventory</h2>
+                    </div>
+                    <div style="margin-bottom:10px; display:flex; gap:8px; align-items:center;">
+                        <input id="inv-search" type="text" placeholder="Search…" style="flex:2; min-width:66%;">
+                        <select id="inv-filter" style="flex:1; min-width:25%;">
+                            <option value="all">All</option>
+                            ${families.map(f => `<option value="${f.subpool_id}">${f.name}</option>`).join('')}
+                            <option value="mixers">Mixers</option>
+                            <option value="additives">Additives</option>
+                            ${secondaryKeys.map(k => `<option value="${k}">${(k.split('.')[1] || k)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="inv-list"></div>
+                `;
+                appContainer.innerHTML = html;
+                const backBtn = document.getElementById('inv-back');
+                const filterEl = document.getElementById('inv-filter');
+                const searchEl = document.getElementById('inv-search');
+                // Back navigates up one level: items -> categories, categories -> landing
+                backBtn.addEventListener('click', () => {
+                    const hasQuery = (searchEl.value || '').trim().length > 0;
+                    const notAtCategories = (filterEl.value && filterEl.value !== 'all') || hasQuery;
+                    if (notAtCategories) {
+                        // Go up to category list
+                        filterEl.value = 'all';
+                        searchEl.value = '';
+                        renderItems('all', '');
+                    } else {
+                        // Already at categories: go back to the inventory home
+                        renderLanding();
+                    }
+                });
+
+                const toTitle = (s) => s.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+                const renderItemDetail = (ctx) => {
+                    const container = document.getElementById('inv-list');
+                    const { item, originKind, originId } = ctx;
+                    const faded = (on) => on ? '' : 'style="opacity:0.5"';
+                    container.innerHTML = `
+                        <div style="margin-bottom:8px;"><button id="detail-back" class="secondary">Back</button></div>
+                        <div ${faded(item.in_rotation)}>
+                            <h3 style="margin:4px 0;">${item.name}</h3>
+                            <button id="detail-toggle">${item.in_rotation ? 'Deprecate' : 'Restore'}</button>
+                        </div>
+                    `;
+                    document.getElementById('detail-back').addEventListener('click', () => {
+                        renderItems(filterEl.value, searchEl.value.trim());
+                    });
+                    document.getElementById('detail-toggle').addEventListener('click', async () => {
+                        item.in_rotation = !item.in_rotation;
+                        if (originKind === 'mixers' || originKind === 'additives') {
+                            await window.updateItem(item);
+                        } else if (originKind === 'sub') {
+                            await window.updateSubpoolItem(originId, item);
+                        } else if (originKind === 'sec') {
+                            await window.updateSecondaryItem(originId, item);
+                        }
+                        data = await getData();
+                        window.setData(data);
+                        renderItemDetail({ item, originKind, originId });
+                    });
+                };
+
+                const renderItems = (filterVal, query) => {
+                    const container = document.getElementById('inv-list');
+                    const q = (query || '').toLowerCase();
+                    let out = '<ul style="list-style:none; padding:0;">';
+
+                    const pushItem = (obj) => {
+                        const isActive = obj.in_rotation !== false; // default true if missing
+                        const cls = isActive ? 'open-item' : 'open-item inv-deprecated';
+                        out += `<li><button class="${cls}" data-kind="${obj.kind}" data-origin="${obj.origin}" data-id="${obj.id}">${obj.name}</button></li>`;
+                    };
+
+                    if (q) {
+                        Object.keys(data.subpools || {}).forEach(sp => {
+                            (data.subpools[sp] || []).forEach(it => {
+                                if ((it.name || '').toLowerCase().includes(q)) pushItem({ kind: 'sub', origin: sp, id: it.id, name: it.name, in_rotation: it.in_rotation });
+                            });
+                        });
+                        (data.inventory.mixers || []).forEach(m => {
+                            if ((m.name || '').toLowerCase().includes(q)) pushItem({ kind: 'mixers', origin: 'mixers', id: m.id, name: m.name, in_rotation: m.in_rotation });
+                        });
+                        (data.inventory.additives || []).forEach(a => {
+                            if ((a.name || '').toLowerCase().includes(q)) pushItem({ kind: 'additives', origin: 'additives', id: a.id, name: a.name, in_rotation: a.in_rotation });
+                        });
+                        Object.keys(data.secondary || {}).forEach(sk => {
+                            (data.secondary[sk] || []).forEach(it => {
+                                if ((it.name || '').toLowerCase().includes(q)) pushItem({ kind: 'sec', origin: sk, id: it.id, name: it.name, in_rotation: it.in_rotation });
+                            });
+                        });
+                    } else if (filterVal === 'mixers') {
+                        (data.inventory.mixers || []).slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(m => pushItem({ kind: 'mixers', origin: 'mixers', id: m.id, name: m.name, in_rotation: m.in_rotation }));
+                    } else if (filterVal === 'additives') {
+                        (data.inventory.additives || []).slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(a => pushItem({ kind: 'additives', origin: 'additives', id: a.id, name: a.name, in_rotation: a.in_rotation }));
+                    } else if (filterVal && filterVal.startsWith('sub.')) {
+                        (data.subpools[filterVal] || []).slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(it => pushItem({ kind: 'sub', origin: filterVal, id: it.id, name: it.name, in_rotation: it.in_rotation }));
+                    } else if (filterVal && filterVal.startsWith('sec.')) {
+                        (data.secondary[filterVal] || []).slice().sort((a,b)=>a.name.localeCompare(b.name)).forEach(it => pushItem({ kind: 'sec', origin: filterVal, id: it.id, name: it.name, in_rotation: it.in_rotation }));
+                    } else {
+                        const categories = [
+                            ...families.map(f => ({ id: f.subpool_id, label: f.name, kind: 'sub' })),
+                            ...secondaryKeys.map(k => ({ id: k, label: toTitle(k.split('.')[1] || k), kind: 'sec' }))
+                        ].sort((a,b) => a.label.localeCompare(b.label));
+                        categories.forEach(c => {
+                            out += `<li><button class="open-cat" data-id="${c.id}">${c.label}</button></li>`;
+                        });
+                    }
+
+                    out += '</ul>';
+                    container.innerHTML = out;
+
+                    container.querySelectorAll('.open-cat').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const id = e.currentTarget.getAttribute('data-id');
+                            filterEl.value = id;
+                            // Navigating down a level: show items within this category
+                            renderItems(id, '');
+                        });
+                    });
+                    container.querySelectorAll('.open-item').forEach(btn => {
+                        btn.addEventListener('click', (e) => {
+                            const id = e.currentTarget.getAttribute('data-id');
+                            const kind = e.currentTarget.getAttribute('data-kind');
+                            const origin = e.currentTarget.getAttribute('data-origin');
+                            let item = null;
+                            if (kind === 'mixers' || kind === 'additives') {
+                                item = (data.inventory[kind] || []).find(x => x.id === id);
+                            } else if (kind === 'sub') {
+                                item = (data.subpools[origin] || []).find(x => x.id === id);
+                            } else if (kind === 'sec') {
+                                item = (data.secondary[origin] || []).find(x => x.id === id);
+                            }
+                            if (item) {
+                                renderItemDetail({ item: { ...item }, originKind: kind, originId: origin });
+                            }
+                        });
+                    });
+                };
+
+                filterEl.addEventListener('change', () => {
+                    renderItems(filterEl.value, searchEl.value.trim());
+                });
+                searchEl.addEventListener('input', () => {
+                    renderItems(filterEl.value, searchEl.value.trim());
+                });
+                renderItems('all', '');
+            };
+
+            const openAddModal = () => {
+                const families = data.inventory.spirits.filter(s => s.type === 'family');
+                const modal = document.createElement('div');
+                modal.innerHTML = `
+                    <div id="add-item-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:1000;">
+                        <div style="background:#222; padding:16px; border-radius:8px; width:90%; max-width:520px;">
+                            <h3>Add Item</h3>
+                            <label>Type:
+                                <select id="new-type">
+                                    <option value="spirit">Spirit</option>
+                                    <option value="mixers">Mixer</option>
+                                    <option value="additives">Additive</option>
+                                </select>
+                            </label>
+                            <div id="family-wrap" style="margin-top:8px; display:block;">
+                                <label>Family:
+                                    <select id="new-family">
+                                        ${families.map(f => `<option value="${f.id}|${f.subpool_id}">${f.name}</option>`).join('')}
+                                    </select>
+                                </label>
+                            </div>
+                            <label style="display:block; margin-top:8px;">Name: <input id="new-name" type="text" placeholder="e.g., Jim Beam"></label>
+                            <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+                                <button id="new-cancel">Cancel</button>
+                                <button id="new-save" class="primary">Save</button>
+                            </div>
+                        </div>
+                    </div>`;
+                document.body.appendChild(modal.firstElementChild);
+
+                const typeEl = document.getElementById('new-type');
+                const famWrap = document.getElementById('family-wrap');
+                const onTypeChange = () => {
+                    famWrap.style.display = typeEl.value === 'spirit' ? 'block' : 'none';
+                };
+                typeEl.addEventListener('change', onTypeChange);
+                onTypeChange();
+
+                document.getElementById('new-cancel').addEventListener('click', () => {
+                    document.getElementById('add-item-modal')?.remove();
+                });
+                document.getElementById('new-save').addEventListener('click', async () => {
+                    const t = typeEl.value;
+                    const name = (document.getElementById('new-name').value || '').trim();
+                    if (!name) return;
+
+                    if (t === 'spirit') {
+                        const val = document.getElementById('new-family').value; // e.g., spirits.whiskey|sub.whiskey
+                        const [familyId, subId] = val.split('|');
+                        const familyKey = familyId.split('.')[1];
+                        const id = `${familyKey}.${slugify(name)}`;
+                        const newItem = { id, name, in_rotation: true };
+                        await window.addSubpoolItem(subId, newItem);
+                    } else if (t === 'mixers') {
+                        const id = `mixers.${slugify(name)}`;
+                        const newItem = { id, name, in_rotation: true };
+                        await window.addItem(newItem);
+                    } else if (t === 'additives') {
+                        const id = `add.${slugify(name)}`;
+                        const newItem = { id, name, in_rotation: true };
+                        await window.addItem(newItem);
+                    }
+
+                    document.getElementById('add-item-modal')?.remove();
+                    await renderList();
+                });
+            };
+
+            // Add a new Spirit Family category (e.g., Whiskey, Vodka)
+            const openAddCategoryModal = () => {
+                const modal = document.createElement('div');
+                modal.innerHTML = `
+                    <div id="add-category-modal" style="position:fixed; inset:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:1000;">
+                        <div style="background:#222; padding:16px; border-radius:8px; width:90%; max-width:520px;">
+                            <h3>Add Category</h3>
+                            <label>Under:
+                                <select id="cat-under">
+                                    <option value="spirit">Spirit</option>
+                                    <option value="secondary">Secondary</option>
+                                </select>
+                            </label>
+                            <label style="display:block; margin-top:8px;">Name: <input id="cat-name" type="text" placeholder="e.g., Whiskey"></label>
+                            <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end;">
+                                <button id="cat-cancel">Cancel</button>
+                                <button id="cat-save" class="primary">Save</button>
+                            </div>
+                        </div>
+                    </div>`;
+                document.body.appendChild(modal.firstElementChild);
+
+                document.getElementById('cat-cancel').addEventListener('click', () => {
+                    document.getElementById('add-category-modal')?.remove();
+                });
+                document.getElementById('cat-save').addEventListener('click', async () => {
+                    const under = (document.getElementById('cat-under').value || 'spirit');
+                    const name = (document.getElementById('cat-name').value || '').trim();
+                    if (!name) return;
+                    if (under === 'spirit') {
+                        const key = slugify(name);
+                        const familyId = `spirits.${key}`;
+                        const subpoolId = `sub.${key}`;
+                        const familyItem = { id: familyId, name, type: 'family', in_rotation: true, subpool_id: subpoolId };
+                        await window.addItem(familyItem);
+                        await window.addSubpool(subpoolId, []);
+                    } else if (under === 'secondary') {
+                        const key = slugify(name);
+                        const poolId = `sec.${key}`;
+                        await window.addSecondaryPool(poolId, []);
+                    }
+                    document.getElementById('add-category-modal')?.remove();
+                    await renderList();
+                });
+            };
+
+            renderLanding();
+        },
+        exit: () => {
+            console.log('Exiting INVENTORY state');
+        }
+    },
+    RECIPE_BOOK: {
+        enter: async () => {
+            console.log('Entering RECIPE_BOOK state');
+            const appContainer = document.getElementById('app-container');
+            const panel = document.getElementById('dev-validations-panel');
+if (panel) panel.style.display = 'none';
+            const cookbook = await window.getCookbook();
+            let html = `
+                <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+                    <button id="recipe-back" class="secondary">Back</button>
+                    <h2 style="margin:0;">Recipe Book</h2>
+                </div>
+                <div style="margin-bottom:10px; display:flex; gap:8px; align-items:center;">
+                    <input type="text" id="search-recipe-book" placeholder="Search recipes..." aria-label="Search recipes" style="flex:2; min-width:66%;">
+                    <select id="sort-recipe-book" aria-label="Sort recipes" style="flex:1; min-width:25%;">
+                        <option value="date">Date</option>
+                        <option value="name">Name</option>
+                        <option value="rating">Rating</option>
+                    </select>
+                </div>
+            `;
+
+            if (cookbook.length === 0) {
+                html += '<p>No saved recipes yet.</p>';
+            } else {
+                // Sort by date descending (newest first)
+                const sortedCookbook = [...cookbook].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+                html += '<div id="recipe-list">';
+                html += '<ul>';
+                sortedCookbook.forEach((recipe, index) => {
+                    const recipeName = recipe.name || 'My Dicey Drink';
+                    const rating = recipe.rating || 0;
+                    const notes = recipe.notes || '';
+                    const date = recipe.date ? new Date(recipe.date).toLocaleDateString() : 'Unknown date';
+
+                    html += `<li style="text-align: left; padding: 10px; margin: 5px 0; background: #333; border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${recipeName}</strong>
+                                <div>Rating: ${'★'.repeat(rating)}${'☆'.repeat(5-rating)}</div>
+                                <div style="font-size: 0.9em; color: #aaa;">${date}</div>
+                                ${notes ? `<div style="font-style: italic; margin-top: 5px;">"${notes}"</div>` : ''}
+                            </div>
+                            <div>
+                                <button class="remix-recipe" data-index="${index}" style="display: block; margin: 2px 0;">Remix</button>
+                                <button class="view-recipe" data-index="${index}" style="display: block; margin: 2px 0;">View</button>
+                            </div>
+                        </div>
+                    </li>`;
+                });
+                html += '</ul>';
+                html += '</div>';
+            }
+
+            appContainer.innerHTML = html;
+
+            // Add bottom export button similar to Inventory
+            const exportBar = document.createElement('div');
+            exportBar.style.position = 'fixed';
+            exportBar.style.bottom = '16px';
+            exportBar.style.left = '0';
+            exportBar.style.right = '0';
+            exportBar.style.textAlign = 'center';
+            exportBar.innerHTML = '<button id="export-recipe-book" class="secondary" style="opacity:0.9;" aria-label="Export recipes">Export Recipes</button>';
+            document.body.appendChild(exportBar);
+
+            // Back to Home
+            document.getElementById('recipe-back').addEventListener('click', () => transitionTo('IDLE'));
+
+            // Export recipe book
+            document.getElementById('export-recipe-book').addEventListener('click', () => window.exportCookbook(cookbook));
+
+            // Add search functionality
+            document.getElementById('search-recipe-book').addEventListener('input', (e) => {
+                window.filterCookbook(cookbook, e.target.value, document.getElementById('sort-recipe-book').value);
+            });
+
+            // Add sort functionality
+            document.getElementById('sort-recipe-book').addEventListener('change', (e) => {
+                window.filterCookbook(cookbook, document.getElementById('search-recipe-book').value, e.target.value);
+            });
+
+            // Add remix functionality
+            document.querySelectorAll('.remix-recipe').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const index = parseInt(e.target.dataset.index);
+                    window.remixRecipe(cookbook[index]);
+                });
+            });
+
+            // Add view functionality
+            document.querySelectorAll('.view-recipe').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const index = parseInt(e.target.dataset.index);
+                    window.viewRecipe(cookbook[index]);
+                });
+            });
+        },
+        exit: () => {
+            console.log('Exiting RECIPE_BOOK state');
+            // Clean up floating export bar if present
+            document.querySelectorAll('#export-recipe-book').forEach(btn => {
+                const bar = btn.parentElement;
+                if (bar && bar.parentElement === document.body) bar.remove();
+            });
+        }
+    },
+    SETTINGS: {
+        enter: () => {
+            console.log('Entering SETTINGS state');
+            const appContainer = document.getElementById('app-container');
+            let html = '<h2>Settings</h2>';
+            html += '<button id="back-to-idle">Back</button>';
+
+            // Add dev validations panel inside the settings page
+            html += '<div id="dev-validations-panel" style="margin: 16px auto; max-width: 420px; background: #222; border: 1px solid #00ffff; border-radius: 6px; padding: 12px;">';
+            html += '<div id="dev-info"><div><strong>Dev Validations</strong></div></div>';
+            html += '</div>';
+
+            appContainer.innerHTML = html;
+
+            document.getElementById('back-to-idle').addEventListener('click', () => transitionTo('IDLE'));
+
+            // Populate the dev panel content
+            setTimeout(() => {
+                const infoEl = document.getElementById('dev-info');
+                if (infoEl) {
+                    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                    infoEl.innerHTML = `
+                        <div><strong>Dev Validations</strong></div>
+                        <div>WebGL: ${window.devIsWebGLSupported() ? 'supported' : 'not supported'}</div>
+                        <div>Reduced motion: ${reduced ? 'true' : 'false'}</div>
+                    `;
+                }
+
+                const panelEl = document.getElementById('dev-validations-panel');
+                if (panelEl) {
+                    const buttonsDiv = document.createElement('div');
+                    buttonsDiv.style.marginTop = '8px';
+                    const runBtn = document.createElement('button');
+                    runBtn.id = 'run-anim-perf';
+                    runBtn.textContent = 'Run Anim Perf';
+                    const forceFallbackBtn = document.createElement('button');
+                    forceFallbackBtn.id = 'force-fallback-roll';
+                    forceFallbackBtn.textContent = 'Force Fallback Roll';
+                    forceFallbackBtn.style.marginLeft = '5px';
+                    const output = document.createElement('div');
+                    output.id = 'dev-output';
+                    output.style.marginTop = '10px';
+                    output.style.textAlign = 'left';
+                    output.style.fontFamily = 'monospace';
+                    output.style.fontSize = '12px';
+                    const mount = document.createElement('div');
+                    mount.id = 'dev-mount';
+                    mount.className = 'roll-wrap';
+                    mount.style.marginTop = '12px';
+
+                    buttonsDiv.appendChild(runBtn);
+                    buttonsDiv.appendChild(forceFallbackBtn);
+                    panelEl.appendChild(buttonsDiv);
+                    panelEl.appendChild(output);
+                    panelEl.appendChild(mount);
+
+                    // Add event listeners
+                    runBtn.addEventListener('click', async () => {
+                        const parent = document.getElementById('dev-mount');
+                        if (!parent) return;
+                        parent.innerHTML = '';
+                        const N = 12; const k = 7;
+                        const start = performance.now();
+                        try {
+                            if (window.roll3D) await window.roll3D({ parent, N, k, durationMs: 1200 });
+                        } catch (e) {
+                            if (window.rollFallback) await window.rollFallback({ parent, N, k, durationMs: 1200 });
+                        }
+                        const end = performance.now();
+                        const duration = Math.round(end - start);
+                        const ok = duration <= 1200 ? 'OK' : 'SLOW';
+                        document.getElementById('dev-output').textContent = `Anim duration: ${duration} ms (${ok})`;
+                    });
+
+                    forceFallbackBtn.addEventListener('click', async () => {
+                        const parent = document.getElementById('dev-mount');
+                        if (!parent) return;
+                        parent.innerHTML = '';
+                        const N = 10; const k = 'joker';
+                        const start = performance.now();
+                        if (window.rollFallback) await window.rollFallback({ parent, N, k, durationMs: 900 });
+                        const end = performance.now();
+                        const duration = Math.round(end - start);
+                        document.getElementById('dev-output').textContent = `Fallback duration: ${duration} ms`;
+                    });
+                }
+            }, 0); // Next tick
+        },
+        exit: () => {
+            console.log('Exiting SETTINGS state');
+        }
+    }
+};
+
+// State transition function
+export function transitionTo(newState, context = {}) {
+    if (states[state.currentState] && states[state.currentState].exit) {
+        states[state.currentState].exit();
+    }
+    state.currentState = newState;
+    if (states[state.currentState] && states[state.currentState].enter) {
+        states[state.currentState].enter(context);
+    }
+    window.updateProgressDrawer();
+}
+
+// Utility functions for state management
+export function resetRecipeState() {
+    state.sessionActive = false;
+    state.rerollTokens = 1;
+    state.selectedItems = [];
+    state.recipe = {
+        spirits: [],
+        spiritFamilies: [],
+        mixers: [],
+        additives: [],
+        secondaries: []
+    };
+}
+
+// Expose a simple Home action for the topbar button
+export function goHome() {
+    transitionTo('IDLE');
+}

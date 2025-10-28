@@ -1,7 +1,6 @@
 // recipeUtils.js
 // Recipe-related utility functions
 
-import { addRecipeToCookbook } from './storage.js';
 import { transitionTo } from './stateManager.js';
 import { state } from './stateManager.js';
 
@@ -102,16 +101,43 @@ export function rebuildRecipe(recipe) {
 
 export function filterCookbook(cookbook, searchTerm, sortBy) {
     let filtered = [...cookbook];
-    
-    // Apply search filter
-    if (searchTerm) {
-        filtered = filtered.filter(recipe => {
-            const name = (recipe.name || 'My Dicey Drink').toLowerCase();
-            const notes = (recipe.notes || '').toLowerCase();
-            return name.includes(searchTerm.toLowerCase()) || notes.includes(searchTerm.toLowerCase());
+
+    // Build a lowercase search string containing name, notes, ingredients, and family/category tokens
+    const buildSearchText = (recipe) => {
+        const parts = [];
+        const lower = (s) => (s || '').toString().toLowerCase();
+        const pushName = (obj) => { if (obj && obj.name) parts.push(lower(obj.name)); };
+        const familyFromSpiritId = (id) => {
+            if (!id || typeof id !== 'string') return '';
+            // spirit ids look like "whiskey.jim_beam" -> family key = whiskey -> title-case Whiskey
+            const key = id.split('.')[0] || '';
+            if (!key) return '';
+            return key.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        };
+
+        parts.push(lower(recipe.name || 'My Dicey Drink'));
+        parts.push(lower(recipe.notes || ''));
+        parts.push(lower(recipe.method || ''));
+        parts.push(lower(recipe.style || ''));
+
+        (recipe.spirits || []).forEach(s => {
+            pushName(s);
+            const fam = familyFromSpiritId(s.id);
+            if (fam) parts.push(lower(fam));
         });
+        (recipe.mixers || []).forEach(pushName);
+        (recipe.additives || []).forEach(pushName);
+        (recipe.secondaries || []).forEach(pushName);
+
+        return parts.join(' ');
+    };
+
+    // Apply search filter (name, ingredients, families/categories, notes, method/style)
+    if (searchTerm) {
+        const q = (searchTerm || '').toLowerCase();
+        filtered = filtered.filter(recipe => buildSearchText(recipe).includes(q));
     }
-    
+
     // Apply sorting
     switch (sortBy) {
     case 'name':

@@ -12,6 +12,10 @@ export function devIsWebGLSupported() {
     }
 }
 
+function devHasThree() {
+    return typeof window !== 'undefined' && !!window.THREE;
+}
+
 export function renderDevPanel() {
     const appContainer = document.getElementById('app-container');
     const containerId = 'dev-validations-panel';
@@ -58,6 +62,7 @@ export function renderDevPanel() {
         info.innerHTML = `
             <div><strong>Dev Validations</strong></div>
             <div>WebGL: ${devIsWebGLSupported() ? 'supported' : 'not supported'}</div>
+            <div>THREE: ${devHasThree() ? 'loaded' : 'missing'}</div>
             <div>Reduced motion: ${reduced ? 'true' : 'false'}</div>
         `;
 
@@ -76,7 +81,8 @@ export function renderDevPanel() {
             const end = performance.now();
             const duration = Math.round(end - start);
             const ok = duration <= 1200 ? 'OK' : 'SLOW';
-            document.getElementById('dev-output').textContent = `Anim duration: ${duration} ms (${ok})`;
+            const path = window.__lastAnimPath || 'unknown';
+            document.getElementById('dev-output').textContent = `Anim duration: ${duration} ms (${ok}) — path: ${path}`;
         });
 
         // Always use fallback path to validate number flip

@@ -98,6 +98,12 @@ body {
     padding: 5px;
 }
 
+.progress-drawer-toggle:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
 .progress-drawer-content {
     padding: 10px 15px;
     text-align: left;
@@ -219,6 +225,33 @@ li {
     border-radius: 6px;
 }
 
+/* Inventory list: make the button fill the row and remove outer borders */
+#inv-list ul { padding: 0; margin: 0; }
+#inv-list li {
+    padding: 0;
+    margin: 6px 0;
+    background: transparent;
+    border: none;
+}
+#inv-list li > button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    margin: 0; /* avoid double spacing with li */
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+
+/* Visually fade deprecated (not in_rotation) items in inventory lists */
+#inv-list li > button.inv-deprecated {
+    opacity: 0.5;
+}
+#inv-list li > button.inv-deprecated:hover {
+    opacity: 0.65;
+}
+
 /* Main container layout polish */
 #app-container {
     max-width: 820px;
@@ -250,6 +283,30 @@ li {
     transform: scale(1.05);
 }
 
+.primary-roll-btn {
+    font-size: 24px;
+    padding: 20px 40px;
+    border-radius: 50px;
+    background-color: var(--accent);
+    color: var(--bg);
+    border: none;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto;
+    display: block;
+}
+
+.primary-roll-btn:hover {
+    transform: scale(1.05);
+}
+
+.primary-roll-btn:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 3px;
+}
+
 /* Bottom navigation bar */
 .bottom-nav {
     position: fixed;
@@ -273,6 +330,12 @@ li {
 
 .bottom-nav button:hover {
     color: var(--accent);
+}
+
+.bottom-nav button:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+    border-radius: 6px;
 }
 
 /* Options container */

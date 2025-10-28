@@ -3,12 +3,12 @@
 
 import { roll3D, rollFallback, coinFlip } from './anim.js';
 import { playRollSound, playConfirmSound, playJokerSound } from './sfx.js';
-import { initDB, getData, updateItem, deleteItem, addItem, addRecipeToCookbook, getCookbook, replaceInventoryData } from './storage.js';
+import { initDB, getData, updateItem, deleteItem, addItem, addRecipeToCookbook, getCookbook, replaceInventoryData, updateSubpoolItem, addSubpoolItem, addSubpool, addSecondaryPool, updateSecondaryItem } from './storage.js';
 import { violatesHardBan, getSoftWeight } from './rules.js';
 import { cryptoRoll, cryptoChoice, weightedCryptoChoice } from './rng.js';
 import { generateRecipeDetails } from './measure.js';
 import { generateSVG, downloadSVG, encodeShareCode, decodeShareCode } from './exporter.js';
-import { state, states, transitionTo, resetRecipeState, goHome } from './stateManager.js';
+import { registerAllStates, transitionTo, state, resetRecipeState, goHome } from './state/index.js';
 import { initProgressDrawer, addProgressStep, updateProgressDrawer, toggleProgressDrawer, renderProgressDrawer } from './progressDrawer.js';
 import { highlightAndSlideUp, showNoSolutionMessage, showShareCodeImportModal, displayPick } from './uiHelpers.js';
 import { setData, rollForUniqueItems, findItem, displayAnimatedPick, displayDealersChoice } from './itemUtils.js';
@@ -16,9 +16,13 @@ import { remixRecipe, viewRecipe, rebuildRecipe, filterCookbook } from './recipe
 import { exportCookbook, exportInventory, importCookbook, importInventory, importRecipes, importInventoryData } from './importExportUtils.js';
 import { renderDevPanel, devIsWebGLSupported } from './devPanel.js';
 
-console.log('App loaded.');
+// Register all modular states before any transitions
+registerAllStates();
 
-const appContainer = document.getElementById('app-container');
+// Centralized state transition progress update
+window.addEventListener('stateTransition', () => {
+  try { if (typeof updateProgressDrawer === 'function') updateProgressDrawer(); } catch {}
+});
 
 let data = {};
 
@@ -37,6 +41,11 @@ window.addItem = addItem;
 window.addRecipeToCookbook = addRecipeToCookbook;
 window.getCookbook = getCookbook;
 window.replaceInventoryData = replaceInventoryData;
+window.updateSubpoolItem = updateSubpoolItem;
+window.addSubpoolItem = addSubpoolItem;
+window.addSubpool = addSubpool;
+window.addSecondaryPool = addSecondaryPool;
+window.updateSecondaryItem = updateSecondaryItem;
 window.violatesHardBan = violatesHardBan;
 window.getSoftWeight = getSoftWeight;
 window.cryptoRoll = cryptoRoll;
@@ -48,7 +57,6 @@ window.downloadSVG = downloadSVG;
 window.encodeShareCode = encodeShareCode;
 window.decodeShareCode = decodeShareCode;
 window.state = state;
-window.states = states;
 window.transitionTo = transitionTo;
 window.resetRecipeState = resetRecipeState;
 window.goHome = goHome;

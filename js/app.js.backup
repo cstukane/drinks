@@ -871,7 +871,7 @@ ${recipeDetails.instructions.map((step, i) => `${i+1}. ${step}`).join('\n')}
             
             // Add import/export buttons
             html += `<div style="margin: 10px 0;">
-                <button id="export-recipe-book">Export Recipe Book</button>
+                <button id="export-recipe-book">Export Recipes</button>
                 <button id="import-recipe-book">Import Recipe Book</button>
                 <button id="export-inventory">Export Inventory</button>
                 <button id="import-inventory">Import Inventory</button>

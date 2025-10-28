@@ -1,11 +1,13 @@
 // pwa/sw.js
 // Service worker for Dicey Drinks PWA
 
-const CACHE_NAME = 'dicey-drinks-v1';
+const CACHE_NAME = 'dicey-drinks-v3';
 const urlsToCache = [
   '../index.html',
   '../css/theme.css',
   '../js/app.js',
+  '../js/stateManager.js',
+  '../js/itemUtils.js',
   '../js/storage.js',
   '../js/rng.js',
   '../js/rules.js',

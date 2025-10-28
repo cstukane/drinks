@@ -15,39 +15,49 @@ global.window = {
         origin: 'http://localhost:5012',
         pathname: '/index.html',
         hash: ''
-    }
+    },
+    dispatchEvent: function() {},
+    addEventListener: function() {}
+};
+
+// Minimal CustomEvent polyfill for Node environment
+global.CustomEvent = function(name, params) {
+    return { type: name, detail: (params && params.detail) || null };
 };
 
 // Mock other browser APIs
-global.document = {
-    createElement: function(tag) {
-        return {
-            getContext: function() {
-                return null;
-            },
-            appendChild: function() {},
-            innerHTML: '',
-            style: {}
-        };
-    },
-    getElementById: function() {
-        return {
-            addEventListener: function() {},
-            innerHTML: '',
-            style: {}
-        };
-    },
-    querySelector: function() {
-        return {
-            addEventListener: function() {}
-        };
-    },
-    querySelectorAll: function() {
-        return [{
-            addEventListener: function() {}
-        }];
-    }
-};
+// Basic DOM mocks with enough features for UI tests
+(function(){
+    const defaultEl = () => ({
+        innerHTML: '',
+        style: {},
+        className: '',
+        classList: { add(){}, remove(){} },
+        appendChild(){},
+        addEventListener(){},
+        setAttribute(){},
+        querySelector(){ return null; },
+        querySelectorAll(){ return []; },
+        firstElementChild: null
+    });
+
+    const elementsById = {};
+
+    global.document = {
+        createElement(tag){
+            const el = defaultEl();
+            return el;
+        },
+        getElementById(id){
+            if (!elementsById[id]) {
+                elementsById[id] = defaultEl();
+            }
+            return elementsById[id];
+        },
+        querySelector(){ return defaultEl(); },
+        querySelectorAll(){ return [defaultEl()]; }
+    };
+})();
 
 // Mock atob and btoa for share code functionality
 global.atob = function(str) {
@@ -391,6 +401,54 @@ function testAnimation() {
     }
 }
 
+// Test Unique Items functions
+async function testUniqueItems() {
+    console.log('\n🧪 Testing Unique Items functions...');
+
+    try {
+        // Import the unique items test
+        const uniqueItemsModule = require('./unique-items-test.js');
+        
+        // Run the unique items tests
+        const result = await uniqueItemsModule.runUniqueItemsTests();
+        return result;
+    } catch (error) {
+        logTestResult('Unique Items tests', false, `Error: ${error.message}`);
+        return false;
+    }
+}
+
+// Test Progress Drawer state gating
+async function testStateGating() {
+    console.log('\n🧪 Testing Progress Drawer state gating...');
+    try {
+        // Ensure we have a known container
+        const container = document.getElementById('progress-drawer-container');
+        container.style = {};
+
+        // Load modules (ESM will be reparsed by Node if needed)
+        const progress = require('../js/progressDrawer.js');
+        const appState = require('../js/stateManager.js');
+
+        // Session inactive: drawer hidden
+        appState.state.sessionActive = false;
+        progress.renderProgressDrawer();
+        const hidden = container.style.display === 'none';
+        logTestResult('Progress hidden when session inactive', hidden);
+
+        // Session active: drawer visible
+        appState.state.sessionActive = true;
+        progress.renderProgressDrawer();
+        const visible = container.style.display === 'block';
+        logTestResult('Progress visible when session active', visible);
+
+        return hidden && visible;
+    } catch (error) {
+        logTestResult('Progress drawer gating tests', false, `Error: ${error.message}`);
+        return false;
+    }
+}
+
 // Run all tests
 async function runAllTests() {
     console.log('🚀 Starting Dicey Drinks Test Suite...\n');
@@ -399,6 +457,27 @@ async function runAllTests() {
     const rngPassed = testRNG();
     const rulesPassed = testRules();
     const animationPassed = testAnimation();
+    const uniqueItemsPassed = await testUniqueItems();
+    const gatingPassed = await testStateGating();
+
+    // Load and run modular state tests (ESM)
+    let stateSuitesPassed = true;
+    try {
+        const sm = await import('./state/state-machine-tests.js');
+        sm.runStateMachineTests();
+        console.log('State machine tests executed.');
+    } catch (e) {
+        stateSuitesPassed = false;
+        logTestResult('State machine tests import/run', false, `Error: ${e.message}`);
+    }
+    try {
+        const nav = await import('./state/navigation-tests.js');
+        nav.runNavigationTests();
+        console.log('Navigation tests executed.');
+    } catch (e) {
+        stateSuitesPassed = false;
+        logTestResult('Navigation tests import/run', false, `Error: ${e.message}`);
+    }
 
     // Summary
     console.log('\n' + '='.repeat(50));

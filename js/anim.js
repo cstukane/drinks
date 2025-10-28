@@ -1,8 +1,10 @@
 // anim.js
 // Handles 3D dice animations for the Dicey Drinks app
 
-// Import THREE as an ES Module
-import * as THREE from './vendor/three.min.js';
+// Prefer global THREE loaded via script; avoid ESM import mismatch with UMD build
+// If THREE is not present, roll3D will fall back to rollFallback.
+// eslint-disable-next-line no-undef
+const THREE = (typeof window !== 'undefined' && window.THREE) ? window.THREE : (typeof global !== 'undefined' && global.THREE ? global.THREE : null);
 
 // Reusable scene singleton
 let scene, camera, renderer, dieMesh;
@@ -209,35 +211,36 @@ export async function roll3D(opts) {
         return Promise.resolve();
     }
   
-    // Check for WebGL support
-    if (!isWebGLSupported()) {
-    // Fallback to simpler animation
+    // Check for THREE and WebGL support
+    if (!THREE || !isWebGLSupported()) {
+        try { window.__lastAnimPath = 'fallback-no-webgl-or-three'; } catch { /* Ignore errors */ }
+        // Fallback to simpler animation
         return rollFallback(opts);
     }
-  
+
     return new Promise((resolve) => {
     // Initialize scene
         initScene();
-    
+
         // Clear previous die if exists
         if (dieMesh) {
             scene.remove(dieMesh);
         }
-    
+
         // Create new die mesh
         const dieShape = shape || mapNToShape(N);
         dieMesh = createDieMesh(dieShape);
         scene.add(dieMesh);
-    
+
         // Add canvas to parent
         parent.innerHTML = '';
         parent.appendChild(renderer.domElement);
-    
+
         // Start animation
         animateDie(rotationPaths[0], durationMs, () => {
             // Show overlay with result
             const overlay = createOverlay(parent, k, N, k === 'joker');
-      
+
             // Add bounce animation if not reduced motion
             if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
                 setTimeout(() => {
@@ -246,12 +249,13 @@ export async function roll3D(opts) {
             } else {
                 overlay.classList.add('reveal');
             }
-      
+
             // Clean up renderer after a short delay
             setTimeout(() => {
                 if (renderer) {
                     // Stop rendering
                 }
+                try { window.__lastAnimPath = '3d'; } catch { /* Ignore errors */ }
                 resolve();
             }, 300);
         });
@@ -265,7 +269,7 @@ export async function rollFallback(opts) {
     return new Promise((resolve) => {
         // Clear parent
         parent.innerHTML = '';
-    
+
         // Check for reduced motion preference
         if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
             // Skip animation and just show overlay
@@ -276,33 +280,33 @@ export async function rollFallback(opts) {
             }, 100); // Short delay to ensure DOM update
             return;
         }
-    
+
         // Create overlay for displaying numbers
         const overlay = document.createElement('div');
         overlay.className = 'roll-overlay';
         overlay.style.opacity = '1'; // Start visible
-    
+
         const content = document.createElement('div');
         content.style.textAlign = 'center';
-    
+
         const result = document.createElement('div');
         result.style.fontSize = '34px';
         result.style.fontWeight = '800';
         result.style.lineHeight = '1';
         result.style.fontFamily = 'monospace';
-    
+
         content.appendChild(result);
         overlay.appendChild(content);
         parent.appendChild(overlay);
-    
+
         // Number flip animation
         let startTime = Date.now();
         let lastUpdateTime = 0;
         const updateInterval = 100; // Update every 100ms for smoothness
-    
+
         function updateNumber() {
             const elapsed = Date.now() - startTime;
-            
+
             if (elapsed < durationMs) {
                 // Update number every updateInterval ms
                 if (elapsed - lastUpdateTime >= updateInterval) {
@@ -336,7 +340,7 @@ export async function rollFallback(opts) {
                 } else {
                     result.textContent = k;
                 }
-                
+
                 // Add badge
                 const badge = document.createElement('div');
                 badge.className = 'badge';
@@ -347,10 +351,11 @@ export async function rollFallback(opts) {
                 badge.textContent = k === 'joker' ? 'dY?' : `d${N}`;
                 content.appendChild(badge);
                 
+                try { window.__lastAnimPath = 'fallback'; } catch { /* Ignore errors */ }
                 resolve();
             }
         }
-    
+
         updateNumber();
     });
 }

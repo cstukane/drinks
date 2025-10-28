@@ -88,6 +88,22 @@ export function renderProgressDrawer() {
         progressDrawerElement.appendChild(content);
     }
 
+    // Accessibility attributes and controls
+    try {
+        progressDrawerElement.setAttribute('role', 'region');
+        progressDrawerElement.setAttribute('aria-label', 'Progress');
+        content.id = 'progress-drawer-content';
+        const headerEl = progressDrawerElement.querySelector('.progress-drawer-header');
+        if (headerEl) {
+            const toggleBtn = headerEl.querySelector('.progress-drawer-toggle');
+            if (toggleBtn) {
+                toggleBtn.setAttribute('aria-expanded', String(progressDrawer.isOpen));
+                toggleBtn.setAttribute('aria-controls', 'progress-drawer-content');
+                toggleBtn.textContent = progressDrawer.isOpen ? 'Collapse' : 'Expand';
+            }
+        }
+    } catch (e) { /* no-op */ }
+
     // Update content based on steps
     if (progressDrawer.steps.length > 0) {
         let html = '<ul>';
